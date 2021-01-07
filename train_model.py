@@ -10,7 +10,7 @@ from model.ae import AE
 from utils.data_utils import *
 from utils.perf_utils import *
 # from utils.reduc_utils import *
-# from utils.plot_utils import *
+from utils.plot_utils import *
 
 from sklearn.metrics import average_precision_score
 from scipy.spatial import distance
@@ -33,7 +33,8 @@ parser.add_argument("--lr", default=1e-4, type=float,
                     help="learning rate")
 parser.add_argument("--do", default=0, type=float,
                     help="dropout rate")
-
+parser.add_argument("--bn", default=0, type=int,
+                    help="batch norm: 1 to use")
 parser.add_argument("--l_dim", default=10, type=int,
                     help="Latent Dim")
 parser.add_argument("--num_layers", default=2, type=int,
@@ -124,7 +125,10 @@ val_hist={
 model_best={
     'auc_l2':0,
     'auc_cos':0,
-    'state':None,
+
+    'state_l2':None,
+    'state_cos':None,
+
     'epoch_l2':0,
     'epoch_cos':0,
 }
@@ -281,23 +285,40 @@ for epoch in range(args.epoch):
     prev_loss=val_loss
     #Save Model
     if auc_l2>model_best['auc_l2']:
-        # model_best['state']=copy.deepcopy(model.state_dict())
+        model_best['state_l2']=copy.deepcopy(model.state_dict())
         # model_best['epoch']=batch_iter
         model_best['epoch_l2']=epoch+1
         model_best['auc_l2']=auc_l2
     
     if auc_cos>model_best['auc_cos']:
+        model_best['state_cos']=copy.deepcopy(model.state_dict())
         model_best['auc_cos']=auc_cos
         model_best['epoch_cos']=epoch+1
                 
 
 
 print("\nTrain Complete")
+if os.path.isfile("train_auc.txt"):
+     with open("train_auc.txt", "a") as myfile:
+         myfile.write("num_layers,l_dim,epoch,batch,dropout,bn,dist,best_auc,best_ep,seed\n")
 with open("train_auc.txt", "a") as myfile:
-    myfile.write("Num Layers {} L_dim {} Batch {} Seed {}\n".format(args.num_layers,args.l_dim,args.batch_size,args.seed))
-    myfile.write("Val L2 Best {:.5f} at {}\n".format(model_best['auc_l2'],model_best['epoch_l2']))
-    myfile.write("Val Cos Best {:.5f} at {}\n".format(model_best['auc_cos'],model_best['epoch_cos']))
-exit()
+    #L2
+    myfile.write(f"{args.num_layers},{args.l_dim},")
+    myfile.write(f"{args.epoch},{args.batch_size},")
+    myfile.write(f"{args.do},{args.bn},")
+    myfile.write("l2,{:.5f},{},".format(model_best['auc_l2'],model_best['epoch_l2']))
+    myfile.write(f"{args.seed}\n")
+    
+    myfile.write(f"{args.num_layers},{args.l_dim},")
+    myfile.write(f"{args.epoch},{args.batch_size},")
+    myfile.write(f"{args.do},{args.bn},")
+    myfile.write("cos,{:.5f},{},".format(model_best['auc_cos'],model_best['epoch_cos']))
+    myfile.write(f"{args.seed}\n")
+    
+    # myfile.write(f"{args.do},{args.bn},")
+    # myfile.write("Val L2 Best {:.5f} at {}\n".format(model_best['auc_l2'],model_best['epoch_l2']))
+    # myfile.write("Val Cos Best {:.5f} at {}\n".format(model_best['auc_cos'],model_best['epoch_cos']))
+# exit()
 #Make Folder
 if not os.path.exists('weights_{}'.format(args.num_layers)):
     os.makedirs('weights_{}'.format(args.num_layers))
@@ -311,38 +332,20 @@ if not os.path.exists('auc_plot'):
 with open("./weights_{}/ae_{}_{}_{}_{}.pt".format(args.num_layers,args.l_dim,args.epoch,args.batch_size,args.seed), "wb") as f:
     torch.save(
         {
-            "state": model_best['state'],
+            "state_l2": model_best['state_l2'],
+            "state_cos": model_best['state_cos'],
         },
         f,
     )
-exit()
+# exit()
 #Loss Plot
 loss_fig=plot_losses(train_hist['loss'],val_hist['loss'],"Loss History")
-loss_fig.savefig('./loss_plot/loss_{}_{}_{}_{}.png'.format(args.l_dim,args.epoch,args.batch_size,args.seed))
+loss_fig.savefig('./loss_plot/loss_{}_{}_{}_{}_{}.png'.format(args.num_layers,args.l_dim,args.epoch,args.batch_size,args.seed))
 
 # #AUC Plot
 auc_fig=plot_auc(val_hist['auc_l2'])
-auc_fig.savefig('./auc_plot/auc_{}_{}_{}_{}.png'.format(args.l_dim,args.epoch,args.batch_size,args.seed))
+auc_fig.savefig('./auc_plot/l2_{}_{}_{}_{}_{}.png'.format(args.num_layers,args.l_dim,args.epoch,args.batch_size,args.seed))
 
-# auc_f1_fig=plot_auc_f1(val_hist['auc_l2'],val_hist['f1'])
-# auc_f1_fig.savefig('./f1_plot/auc_f1_{}_{}_{}_{}.png'.format(args.l_dim,args.epoch,args.batch_size,args.seed))
-
-#Save Best
-print("L2 Best {:.5f} at {}".format(model_best['auc'],model_best['epoch']))
-
-with open("train_auc.txt", "a") as myfile:
-    myfile.write("L_dim {} Batch {} Seed {}\n".format(args.l_dim,args.batch_size,args.seed))
-    myfile.write("Val Best {:.5f} at {}\n".format(model_best['auc'],model_best['epoch']))
-    
-# with open("train_auc_256.txt", "a") as myfile:
-#     myfile.write("{},{},".format(args.l_dim,args.seed))
-#     myfile.write("{},{:.5f}\n".format(model_best['epoch'],model_best['auc']))
-
-# with open("./weights/l1_{}_{}_{}.pt".format(args.l_dim,args.batch_size,model_best['l1_ep']), "wb") as f:
-#     torch.save(
-#         {
-#             "state": model_best['l1_state'],
-#         },
-#         f,
-#     )
-
+auc_fig=plot_auc(val_hist['auc_cos'])
+auc_fig.savefig('./auc_plot/cos_{}_{}_{}_{}_{}.png'.format(args.num_layers,args.l_dim,args.epoch,args.batch_size,args.seed))
+exit()

@@ -7,7 +7,7 @@ SEEDS="10 20 30 40 50"
 # SEEDS="10"
 # SEEDS="20 30 40 50"
 LDIM="1 2 5 8 10 27 32"
-
+# LDIM="1"
 for seed in $SEEDS
 do
     for i in $LDIM
