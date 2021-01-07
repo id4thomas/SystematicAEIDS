@@ -5,7 +5,7 @@ import numpy as np
 from scipy.spatial import distance
 
 # from perf_utils import *
-from .reduc_utils import *
+# from .reduc_utils import *
 
 # from sklearn.manifold import TSNE
 # from MulticoreTSNE import MulticoreTSNE as TSNE

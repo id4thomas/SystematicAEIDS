@@ -10,3 +10,7 @@ data/cicids17
 #Ignore model chkpoint Folder
 chk/
 wandb/
+weights_*/
+loss_plot/
+auc_plot/
+train_auc.txt
