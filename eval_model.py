@@ -18,8 +18,8 @@ from scipy.spatial import distance
 import copy
 import numpy as np
 
-import wandb
-wandb.init(project="svcc-cicids17")
+# import wandb
+# wandb.init(project="svcc-cicids17")
 
 ATK=1
 SAFE=0
@@ -76,6 +76,11 @@ y_test=np.zeros(x_test.shape[0])
 y_test[y_test_type!='BENIGN']=1
 print("Test: Normal:{}, Atk:{}".format(x_test[y_test_type=='BENIGN'].shape[0],x_test[y_test_type!='BENIGN'].shape[0]))
 
+data=make_balanced_test({'x_test': x_test, 'y_test': y_test,'y_test_type':y_test_type},has_type=True)
+x_test=data['x_test']
+y_test=data['y_test']
+y_test_type=data['y_test_type']
+
 #Get Model
 layers=[args.l_dim]
 for i in range(0,args.num_layers):
@@ -106,6 +111,66 @@ x_test_cuda = torch.from_numpy(x_test).float().to(device)
 test_sampler = SequentialSampler(x_test_cuda)
 test_dataloader = DataLoader(x_test_cuda, sampler=test_sampler, batch_size=args.batch_size)
 
+def check_th(val_dist,y_val,z,avg_type='binary'):
+    mean_l2=np.mean(val_dist)
+    var_l2=np.var(val_dist)
+    stddev_l2=np.std(val_dist)
+
+    #Get value with only safe
+    val_dist_safe=val_dist[y_val==0]
+    mean_l2=np.mean(val_dist_safe)
+    var_l2=np.var(val_dist_safe)
+    stddev_l2=np.std(val_dist_safe)
+
+    # l2_dist_std=ss.zscore(data)
+    th=mean_l2+stddev_l2*z
+    # print("Th{:.5f} Mean{:.5f} Var{:.10f}".format(th,mean_l2,var_l2))
+    # print("Val")
+    y_pred=np.zeros_like(y_val)
+    # test_l2_std=ss.zscore(test_l2)
+    y_pred[val_dist>th]=1
+    precision, recall, f_score, support = precision_recall_fscore_support(y_val, y_pred, pos_label=1, average=avg_type)
+    return f_score,th
+
+#Val Eval
+model.eval()
+with torch.no_grad():
+    pred_val=[]
+    for batch in eval_dataloader:
+        target = batch.type(torch.float32)
+        # print(target.shape)
+        outputs = model(target)
+        batch_error = model.compute_loss(outputs, target)
+        pred_val.append(outputs['output'].cpu().detach().numpy())
+    pred_val=np.concatenate(pred_val)
+
+val_dist_l2=np.mean(np.square(x_val-pred_val),axis=1)
+
+val_dist_safe=val_dist_l2[y_val==0]
+
+comb_dist_mean=np.mean(val_dist_safe)
+comb_dist_std=np.std(val_dist_safe)
+
+val_dist_norm=(val_dist_l2-comb_dist_mean)/comb_dist_std
+
+avg_type='binary'
+
+best_f1=0
+best_th=0
+best_z=0
+for z in range(1,1001):
+    cand=-1+0.01*z
+    # print("\nCand",cand)
+
+    f1,th=check_th(val_dist_l2,y_val,cand,avg_type=avg_type)
+    if best_f1<f1:
+        best_f1=f1
+        best_th=th
+        best_z=cand
+comb_best_z=best_z
+print("Best z {:.3f} th {:.10f}".format(best_z,best_th))
+
+#Test Eval
 model.eval()
 with torch.no_grad():
     pred_val=[]
@@ -125,3 +190,15 @@ test_dist_l2=np.mean(np.square(x_test-pred_val),axis=1)
 # test_dist_cos=[distance.cosine(x_test[i],pred_val[i]) for i in range(x_val.shape[0])]
 auc_l2,_,_=make_roc(test_dist_l2,y_test,ans_label=ATK)
 print("Test AUC L2: {:.5f}".format(auc_l2))
+
+#Standardize Test Dist
+test_dist_norm=(test_dist_l2-comb_dist_mean)/comb_dist_std
+
+y_pred=np.zeros_like(y_test)
+y_pred[test_dist_norm>comb_best_z]=1
+prf(y_test,y_pred,ans_label=1,avg_type=avg_type)
+accuracy = accuracy_score(y_test,y_pred)
+precision, recall, f_score, support = precision_recall_fscore_support(y_test, y_pred, pos_label=1, average=avg_type)
+f_0_5=fbeta_score(y_test, y_pred, pos_label=1, average=avg_type, beta=0.5)
+f_2=fbeta_score(y_test, y_pred,pos_label=1, average=avg_type, beta=2)
+print("F1 {:.5f} F0.5 {:.5f} F2 {:.5f}\n".format(f_score,f_0_5,f_2))
