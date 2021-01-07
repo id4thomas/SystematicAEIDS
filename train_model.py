@@ -29,21 +29,26 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("--seed", default=42, type=int,
                     help="random seed for reproductability")
-parser.add_argument("--lr", default=1e-4, type=float,
-                    help="learning rate")
-parser.add_argument("--do", default=0, type=float,
-                    help="dropout rate")
-parser.add_argument("--bn", default=0, type=int,
-                    help="batch norm: 1 to use")
+
+#Model Config
 parser.add_argument("--l_dim", default=10, type=int,
                     help="Latent Dim")
 parser.add_argument("--num_layers", default=2, type=int,
                     help="number of layers")
+parser.add_argument("--size", default=64, type=int,
+                    help="Smallest Hid Size")
+#Regularization
+parser.add_argument("--do", default=0, type=float,
+                    help="dropout rate")
+parser.add_argument("--bn", default=0, type=int,
+                    help="batch norm: 1 to use")
 
 parser.add_argument("--epoch", default=10, type=int,
                     help="training epochs")
 parser.add_argument("--batch_size", default=8192, type=int,
                     help="batch size for train and test")
+parser.add_argument("--lr", default=1e-4, type=float,
+                    help="learning rate")
 
 args = parser.parse_args()
 
@@ -72,15 +77,18 @@ y_val=data['y_val']
 print("Bal Val: Normal:{}, Atk:{}".format(x_val[y_val==SAFE].shape[0],x_val[y_val!=SAFE].shape[0]))
 
 #Get Model
-layers=[]
-for i in range(args.num_layers):
-    layers.append(args.l_dim*2**(i))
+layers=[args.l_dim]
+for i in range(0,args.num_layers):
+    #Multiplying
+    # layers.append(args.l_dim*2**(i))
+    #Fixed
+    layers.append(args.size*2**(i))
 layers.reverse()
 model_config={
     'd_dim':80,
     'layers':layers
 }
-model_desc='AE-{}_{}'.format(args.l_dim,args.num_layers)
+model_desc='AE-{}_{}_{}'.format(args.size,args.l_dim,args.num_layers)
 model=AE(model_config).to(device)
 # wandb.watch(model)
 
@@ -298,18 +306,18 @@ for epoch in range(args.epoch):
 
 
 print("\nTrain Complete")
-if os.path.isfile("train_auc.txt"):
+if not os.path.isfile("train_auc.txt"):
      with open("train_auc.txt", "a") as myfile:
-         myfile.write("num_layers,l_dim,epoch,batch,dropout,bn,dist,best_auc,best_ep,seed\n")
+         myfile.write("size,num_layers,l_dim,epoch,batch,dropout,bn,dist,best_auc,best_ep,seed\n")
 with open("train_auc.txt", "a") as myfile:
     #L2
-    myfile.write(f"{args.num_layers},{args.l_dim},")
+    myfile.write(f"{args.size},{args.num_layers},{args.l_dim},")
     myfile.write(f"{args.epoch},{args.batch_size},")
     myfile.write(f"{args.do},{args.bn},")
     myfile.write("l2,{:.5f},{},".format(model_best['auc_l2'],model_best['epoch_l2']))
     myfile.write(f"{args.seed}\n")
     
-    myfile.write(f"{args.num_layers},{args.l_dim},")
+    myfile.write(f"{args.size},{args.num_layers},{args.l_dim},")
     myfile.write(f"{args.epoch},{args.batch_size},")
     myfile.write(f"{args.do},{args.bn},")
     myfile.write("cos,{:.5f},{},".format(model_best['auc_cos'],model_best['epoch_cos']))
@@ -329,7 +337,7 @@ if not os.path.exists('auc_plot'):
 # if not os.path.exists('f1_plot'):
 #     os.makedirs('f1_plot') 
 
-with open("./weights_{}/ae_{}_{}_{}_{}.pt".format(args.num_layers,args.l_dim,args.epoch,args.batch_size,args.seed), "wb") as f:
+with open("./weights_{}/cic_{}_{}_{}_{}_{}.pt".format(args.num_layers,args.size,args.l_dim,args.epoch,args.batch_size,args.seed), "wb") as f:
     torch.save(
         {
             "state_l2": model_best['state_l2'],
@@ -340,12 +348,12 @@ with open("./weights_{}/ae_{}_{}_{}_{}.pt".format(args.num_layers,args.l_dim,arg
 # exit()
 #Loss Plot
 loss_fig=plot_losses(train_hist['loss'],val_hist['loss'],"Loss History")
-loss_fig.savefig('./loss_plot/loss_{}_{}_{}_{}_{}.png'.format(args.num_layers,args.l_dim,args.epoch,args.batch_size,args.seed))
+loss_fig.savefig('./loss_plot/cic_{}_{}_{}_{}_{}_{}.png'.format(args.num_layers,args.size,args.l_dim,args.epoch,args.batch_size,args.seed))
 
 # #AUC Plot
 auc_fig=plot_auc(val_hist['auc_l2'])
-auc_fig.savefig('./auc_plot/l2_{}_{}_{}_{}_{}.png'.format(args.num_layers,args.l_dim,args.epoch,args.batch_size,args.seed))
+auc_fig.savefig('./auc_plot/cic_l2_{}_{}_{}_{}_{}.png'.format(args.num_layers,args.size,args.l_dim,args.epoch,args.batch_size,args.seed))
 
 auc_fig=plot_auc(val_hist['auc_cos'])
-auc_fig.savefig('./auc_plot/cos_{}_{}_{}_{}_{}.png'.format(args.num_layers,args.l_dim,args.epoch,args.batch_size,args.seed))
+auc_fig.savefig('./auc_plot/cic_cos_{}_{}_{}_{}_{}.png'.format(args.num_layers,args.size,args.l_dim,args.epoch,args.batch_size,args.seed))
 exit()

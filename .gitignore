@@ -14,3 +14,5 @@ weights_*/
 loss_plot/
 auc_plot/
 train_auc.txt
+
+train_*.sh
