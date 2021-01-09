@@ -76,11 +76,15 @@ y_test=np.zeros(x_test.shape[0])
 y_test[y_test_type!='BENIGN']=1
 print("Test: Normal:{}, Atk:{}".format(x_test[y_test_type=='BENIGN'].shape[0],x_test[y_test_type!='BENIGN'].shape[0]))
 
-data=make_balanced_test({'x_test': x_test, 'y_test': y_test,'y_test_type':y_test_type},has_type=True)
-x_test=data['x_test']
-y_test=data['y_test']
-y_test_type=data['y_test_type']
-
+balanced_test=True
+if balanced_test:
+    data=make_balanced_test({'x_test': x_test, 'y_test': y_test,'y_test_type':y_test_type},has_type=True)
+    x_test=data['x_test']
+    y_test=data['y_test']
+    y_test_type=data['y_test_type']
+    log_name="test_perf_bal.txt"
+else:
+    log_name="test_perf.txt"
 #Get Model
 layers=[args.l_dim]
 for i in range(0,args.num_layers):
@@ -188,8 +192,8 @@ with torch.no_grad():
 
 test_dist_l2=np.mean(np.square(x_test-pred_val),axis=1)
 # test_dist_cos=[distance.cosine(x_test[i],pred_val[i]) for i in range(x_val.shape[0])]
-auc_l2,_,_=make_roc(test_dist_l2,y_test,ans_label=ATK)
-print("Test AUC L2: {:.5f}".format(auc_l2))
+test_auc_l2,_,_=make_roc(test_dist_l2,y_test,ans_label=ATK)
+print("Test AUC L2: {:.5f}".format(test_auc_l2))
 
 #Standardize Test Dist
 test_dist_norm=(test_dist_l2-comb_dist_mean)/comb_dist_std
@@ -202,3 +206,20 @@ precision, recall, f_score, support = precision_recall_fscore_support(y_test, y_
 f_0_5=fbeta_score(y_test, y_pred, pos_label=1, average=avg_type, beta=0.5)
 f_2=fbeta_score(y_test, y_pred,pos_label=1, average=avg_type, beta=2)
 print("F1 {:.5f} F0.5 {:.5f} F2 {:.5f}\n".format(f_score,f_0_5,f_2))
+
+
+
+if not os.path.isfile(log_name):
+     with open(log_name, "a") as myfile:
+         myfile.write("size,num_layers,l_dim,epoch,batch,dropout,bn,dist,"+"auc,z,acc,p,r,f,label"+",seed\n")
+
+with open(log_name, "a") as myfile:
+    #L2
+    myfile.write(f"{args.size},{args.num_layers},{args.l_dim},")
+    myfile.write(f"{args.epoch},{args.batch_size},")
+    myfile.write(f"{args.do},{args.bn},")
+    #PERF
+    # myfile.write("l2,{:.5f},{},".format(model_best['auc_l2'],model_best['epoch_l2']))
+    myfile.write("l2,{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},total,".format(test_auc_l2,comb_best_z,accuracy,precision,recall,f_score))
+    ##
+    myfile.write(f"{args.seed}\n")
