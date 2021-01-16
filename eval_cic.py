@@ -49,7 +49,9 @@ parser.add_argument("--batch_size", default=8192, type=int,
                     help="batch size for train and test")
 parser.add_argument("--lr", default=1e-4, type=float,
                     help="learning rate")
-
+parser.add_argument("--dist", default="l2", type=str,
+                    help="reconstruction dist")
+parser.add_argument('--bal', action='store_true')
 args = parser.parse_args()
 
 # Fix seed
@@ -76,15 +78,21 @@ y_test=np.zeros(x_test.shape[0])
 y_test[y_test_type!='BENIGN']=1
 print("Test: Normal:{}, Atk:{}".format(x_test[y_test_type=='BENIGN'].shape[0],x_test[y_test_type!='BENIGN'].shape[0]))
 
-balanced_test=True
+####Balanced Test
+# balanced_test=True
+balanced_test=args.bal
 if balanced_test:
     data=make_balanced_test({'x_test': x_test, 'y_test': y_test,'y_test_type':y_test_type},has_type=True)
     x_test=data['x_test']
     y_test=data['y_test']
     y_test_type=data['y_test_type']
     log_name="test_perf_bal.txt"
+    print("Balanced")
 else:
+    print("Not Balanced")
     log_name="test_perf.txt"
+
+print(f"Distance {args.dist}")
 #Get Model
 layers=[args.l_dim]
 for i in range(0,args.num_layers):
@@ -148,14 +156,24 @@ with torch.no_grad():
         pred_val.append(outputs['output'].cpu().detach().numpy())
     pred_val=np.concatenate(pred_val)
 
-val_dist_l2=np.mean(np.square(x_val-pred_val),axis=1)
+if args.dist=="l2":
+    val_dist=np.mean(np.square(x_val-pred_val),axis=1)
+else:
+    #cos
+    val_dist=np.array([distance.cosine(x_val[i],pred_val[i]) for i in range(x_val.shape[0])])
+    print(val_dist)
+val_dist_safe=val_dist[y_val==0]
+comb_dist_mean=np.mean(val_dist_safe)
+comb_dist_std=np.std(val_dist_safe)
 
-val_dist_safe=val_dist_l2[y_val==0]
+val_dist_norm=(val_dist-comb_dist_mean)/comb_dist_std
+
+val_dist_safe=val_dist[y_val==0]
 
 comb_dist_mean=np.mean(val_dist_safe)
 comb_dist_std=np.std(val_dist_safe)
 
-val_dist_norm=(val_dist_l2-comb_dist_mean)/comb_dist_std
+val_dist_norm=(val_dist-comb_dist_mean)/comb_dist_std
 
 avg_type='binary'
 
@@ -166,7 +184,7 @@ for z in range(1,1001):
     cand=-1+0.01*z
     # print("\nCand",cand)
 
-    f1,th=check_th(val_dist_l2,y_val,cand,avg_type=avg_type)
+    f1,th=check_th(val_dist,y_val,cand,avg_type=avg_type)
     if best_f1<f1:
         best_f1=f1
         best_th=th
@@ -190,13 +208,16 @@ with torch.no_grad():
 
     pred_val=np.concatenate(pred_val)
 
-test_dist_l2=np.mean(np.square(x_test-pred_val),axis=1)
-# test_dist_cos=[distance.cosine(x_test[i],pred_val[i]) for i in range(x_val.shape[0])]
-test_auc_l2,_,_=make_roc(test_dist_l2,y_test,ans_label=ATK)
-print("Test AUC L2: {:.5f}".format(test_auc_l2))
+if args.dist=="l2":
+    test_dist=np.mean(np.square(x_test-pred_val),axis=1)
+else:
+    test_dist=np.array([distance.cosine(x_test[i],pred_val[i]) for i in range(x_test.shape[0])])
+
+test_auc,_,_=make_roc(test_dist,y_test,ans_label=ATK)
+print("Test AUC L2: {:.5f}".format(test_auc))
 
 #Standardize Test Dist
-test_dist_norm=(test_dist_l2-comb_dist_mean)/comb_dist_std
+test_dist_norm=(test_dist-comb_dist_mean)/comb_dist_std
 
 y_pred=np.zeros_like(y_test)
 y_pred[test_dist_norm>comb_best_z]=1
@@ -220,6 +241,6 @@ with open(log_name, "a") as myfile:
     myfile.write(f"{args.do},{args.bn},")
     #PERF
     # myfile.write("l2,{:.5f},{},".format(model_best['auc_l2'],model_best['epoch_l2']))
-    myfile.write("l2,{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},total,".format(test_auc_l2,comb_best_z,accuracy,precision,recall,f_score))
+    myfile.write("{},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},total,".format(args.dist,test_auc,comb_best_z,accuracy,precision,recall,f_score))
     ##
     myfile.write(f"{args.seed}\n")

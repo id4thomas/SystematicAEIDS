@@ -50,6 +50,8 @@ parser.add_argument("--batch_size", default=8192, type=int,
 parser.add_argument("--lr", default=1e-4, type=float,
                     help="learning rate")
 
+parser.add_argument("--data", default="cic", type=str,
+                        help="Dataset")
 args = parser.parse_args()
 
 # Fix seed

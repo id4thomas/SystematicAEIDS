@@ -18,7 +18,7 @@ loss_plot/
 auc_plot/
 
 #Temporary Scripts
-train_*.sh
-eval_*.sh
+train_cic*.sh
+eval_cic*.sh
 
 log_bak
