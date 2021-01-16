@@ -59,39 +59,38 @@ set_seed(args.seed)
 device = torch.device('cuda:0')
 
 #GET ALL DATA!
-data_path='data/cicids17/split/'
-x_val,_=get_hdf5_data(data_path+'val.hdf5',labeled=False)
-y_val_type=np.load(data_path+'val_label.npy',allow_pickle=True)
-y_val=np.zeros(x_val.shape[0])
-y_val[y_val_type!='BENIGN']=1
-print("Val: Normal:{}, Atk:{}".format(x_val[y_val_type=='BENIGN'].shape[0],x_val[y_val_type!='BENIGN'].shape[0]))
+data_path='data/nsl_kdd/split/'
+x_val,y_val=get_hdf5_data(data_path+'val.hdf5',labeled=True)
+print("Val: Normal:{}, Atk:{}".format(x_val[y_val==SAFE].shape[0],x_val[y_val!=SAFE].shape[0]))
+
 #Balanced
-data=make_balanced_val({'x_val': x_val, 'y_val': y_val})
-x_val=data['x_val']
-y_val=data['y_val']
+data=make_balanced({'x': x_val, 'y': y_val})
+x_val=data['x']
+y_val=data['y']
 print("Bal Val: Normal:{}, Atk:{}".format(x_val[y_val==SAFE].shape[0],x_val[y_val!=SAFE].shape[0]))
 
-
-x_test,_=get_hdf5_data(data_path+'test.hdf5',labeled=False)
+data_path='data/nsl_kdd/processed/'
+x_test,y_test=get_hdf5_data(data_path+'test.hdf5',labeled=True)
 y_test_type=np.load(data_path+'test_label.npy',allow_pickle=True)
-y_test=np.zeros(x_test.shape[0])
-y_test[y_test_type!='BENIGN']=1
-print("Test: Normal:{}, Atk:{}".format(x_test[y_test_type=='BENIGN'].shape[0],x_test[y_test_type!='BENIGN'].shape[0]))
+print("Test Val: Normal:{}, Atk:{}".format(x_test[y_test==SAFE].shape[0],x_test[y_test!=SAFE].shape[0]))
+# exit()
 
 ####Balanced Test
 # balanced_test=True
 balanced_test=args.bal
 if balanced_test:
-    data=make_balanced_test({'x_test': x_test, 'y_test': y_test,'y_test_type':y_test_type},has_type=True)
-    x_test=data['x_test']
-    y_test=data['y_test']
-    y_test_type=data['y_test_type']
-    log_name="perf_results/cic_test_perf_bal.txt"
+    data=make_balanced({'x': x_test, 'y': y_test,'y_type':y_test_type},has_type=True)
+    x_test=data['x']
+    y_test=data['y']
+    y_test_type=data['y_type']
+    print("Bal Test: Normal:{}, Atk:{}".format(x_test[y_test==SAFE].shape[0],x_test[y_test!=SAFE].shape[0]))
+    log_name="perf_results/nsl_test_perf_bal.txt"
     print("Balanced")
 else:
     print("Not Balanced")
-    log_name="perf_results/cic_test_perf.txt"
+    log_name="perf_results/nsl_test_perf.txt"
 
+exit()
 print(f"Distance {args.dist}")
 #Get Model
 layers=[args.l_dim]
@@ -102,14 +101,14 @@ for i in range(0,args.num_layers):
     layers.append(args.size*2**(i))
 layers.reverse()
 model_config={
-    'd_dim':80,
+    'd_dim':x_val.shape[1],
     'layers':layers
 }
 model_desc='AE-{}_{}_{}'.format(args.size,args.l_dim,args.num_layers)
 print(f"Model {model_desc}")
 model=AE(model_config).to(device)
 
-with open("./weights_{}/cic_{}_{}_{}_{}_{}.pt".format(args.num_layers,args.size,args.l_dim,args.epoch,args.batch_size,args.seed), "rb") as f:
+with open("./weights_{}/nsl_{}_{}_{}_{}_{}.pt".format(args.num_layers,args.size,args.l_dim,args.epoch,args.batch_size,args.seed), "rb") as f:
     best_model = torch.load(f)
     
 #L2

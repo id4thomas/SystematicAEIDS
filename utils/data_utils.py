@@ -51,7 +51,7 @@ def make_balanced(data,has_type=False):
     if has_type:
         y_type=data['y_type']
         y_safe_type=np.zeros(x_safe.shape[0])
-        y_atk_type=y_val_type[y_val==1]
+        y_atk_type=y_type[y==1]
 
     if x_safe.shape[0]>x_atk.shape[0]:
         sample_idx=np.random.choice(x_safe.shape[0], x_atk.shape[0])
