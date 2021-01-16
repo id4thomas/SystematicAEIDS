@@ -41,13 +41,13 @@ print("Train: Normal:{}, Atk:{}".format(x_train[y_train==0].shape[0],x_train[y_t
 print("Val: Normal:{}, Atk:{}".format(x_val[y_val==0].shape[0],x_val[y_val!=0].shape[0]))
 
 # print("Saving Validation")
-with h5py.File(save_dir+'val.hdf5', 'w') as hdf:
+with h5py.File(save_dir+'/val.hdf5', 'w') as hdf:
         print('Saving file : {}'.format(save_dir+'/val.hdf5'))
         hdf['x'] = x_val[:]
         hdf['y'] = y_val[:]
 
 # print("Saving Train")
-with h5py.File(save_dir+'train.hdf5', 'w') as hdf:
+with h5py.File(save_dir+'/train.hdf5', 'w') as hdf:
         print('Saving file : {}'.format(save_dir+'/train.hdf5'))
         hdf['x'] = x_train[:]
         hdf['y'] = y_train[:]

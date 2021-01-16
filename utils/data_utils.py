@@ -30,6 +30,13 @@ def get_hdf5_data(file_path,labeled=False,only_safe=False):
         filter_atk(data,label)
     return data,label
 
+def filter_label(data,label,select_label=0):
+    select_idx=[label==select_label]
+    # print("Selected {} total {}".format(data[select_idx].shape[0],data.shape[0]))
+    data=data[tuple(select_idx)]
+    label=label[tuple(select_idx)]
+    return data,label
+
 def make_balanced(data,has_type=False):
     x=data['x']
     y=data['y']
