@@ -6,13 +6,19 @@ __pycache__/
 # Ignore Data Folder
 # data/
 data/cicids17
+data/nsl_kdd
 
 #Ignore model chkpoint Folder
 chk/
 wandb/
 weights_*/
+
+#Plot folders hidden for now
 loss_plot/
 auc_plot/
-train_auc.txt
 
+#Temporary Scripts
 train_*.sh
+eval_*.sh
+
+log_bak
