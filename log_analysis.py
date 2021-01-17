@@ -25,9 +25,9 @@ def train_log_analysis(args):
 
 def test_log_analysis(args):
     if args.bal:
-        log=pd.read_csv('test_perf_bal.txt')
+        log=pd.read_csv(f'perf_results/{args.data}_test_perf_bal.txt')
     else:
-        log=pd.read_csv('test_perf.txt')
+        log=pd.read_csv(f'perf_results/{args.data}_test_perf.txt')
     print(log.shape)
     #size,num_layers,l_dim,epoch,batch,dropout,bn,dist,auc,z,acc,p,r,f,label,seed
     log_select=log.loc[
@@ -40,8 +40,8 @@ def test_log_analysis(args):
         (log["bn"]==args.bn)
     ]
     #seed condition
-    seed_cond=(log["seed"]<=50)
-    log_select=log_select[seed_cond]
+    # seed_cond=(log["seed"]<=50)
+    # log_select=log_select[seed_cond]
     # print(log["seed"].mean(axis=0))
     # dist="l2"
     dist=args.dist
@@ -83,6 +83,8 @@ if __name__=="__main__":
     parser.add_argument('--bal', action='store_true')
     parser.add_argument("--dist", default="l2", type=str,
                     help="reconstruction dist")
+    parser.add_argument("--data", default="cic", type=str,
+                    help="data set")
     args = parser.parse_args()
     # train_log_analysis(args)
     test_log_analysis(args)

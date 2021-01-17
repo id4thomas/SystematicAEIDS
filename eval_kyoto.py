@@ -75,10 +75,11 @@ print("Bal Val: Normal:{}, Atk:{}".format(x_val[y_val==SAFE].shape[0],x_val[y_va
 # balanced_test=True
 balanced_test=args.bal
 if balanced_test:
-    data=make_balanced_test({'x_test': x_test, 'y_test': y_test,'y_test_type':y_test_type},has_type=True)
-    x_test=data['x_test']
-    y_test=data['y_test']
-    y_test_type=data['y_test_type']
+    # data=make_balanced({'x': x_test, 'y': y_test,'y_type':y_test_type},has_type=True)
+    data=make_balanced({'x': x_test, 'y': y_test},has_type=False)
+    x_test=data['x']
+    y_test=data['y']
+    # y_test_type=data['y_type']
     log_name="perf_results/kyoto_test_perf_bal.txt"
     print("Balanced")
 else:
