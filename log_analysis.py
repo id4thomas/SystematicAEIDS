@@ -19,11 +19,15 @@ def train_log_analysis(args):
         (train_log["bn"]==args.bn)
     ]
     # print(log["seed"].mean(axis=0))
-    print(log[log["dist"]=="l2"])
-    print(log[log['dist']=='l2'].groupby(['l_dim']).mean())
+    dist="cos"
+    print(log[log["dist"]==dist])
+    print(log[log['dist']==dist].groupby(['l_dim']).mean())
 
 def test_log_analysis(args):
-    log=pd.read_csv('test_perf_bal.txt')
+    if args.bal:
+        log=pd.read_csv('test_perf_bal.txt')
+    else:
+        log=pd.read_csv('test_perf.txt')
     print(log.shape)
     #size,num_layers,l_dim,epoch,batch,dropout,bn,dist,auc,z,acc,p,r,f,label,seed
     log_select=log.loc[
@@ -35,9 +39,21 @@ def test_log_analysis(args):
         (log["dropout"]==args.do)&
         (log["bn"]==args.bn)
     ]
+    #seed condition
+    seed_cond=(log["seed"]<=50)
+    log_select=log_select[seed_cond]
     # print(log["seed"].mean(axis=0))
-    print(log_select[log_select["dist"]=="l2"])
-    print(log_select[log_select['dist']=='l2'].groupby(['l_dim']).mean())
+    # dist="l2"
+    dist=args.dist
+    
+    print(log_select[log_select["dist"]==dist])
+    print(log_select[log_select["dist"]==dist].shape)
+    if args.bal:
+        print(f"Balanced: dist {dist}")
+    else:
+        print(f"Full: dist {dist}")
+    # print(log_select[log_select["dist"]==dist][log_select["l_dim"]==1])
+    print(log_select[log_select['dist']==dist].groupby(['l_dim']).mean())
 
 
 if __name__=="__main__":
@@ -64,7 +80,9 @@ if __name__=="__main__":
                         help="training epochs")
     parser.add_argument("--batch_size", default=8192, type=int,
                         help="batch size for train and test")
-
+    parser.add_argument('--bal', action='store_true')
+    parser.add_argument("--dist", default="l2", type=str,
+                    help="reconstruction dist")
     args = parser.parse_args()
     # train_log_analysis(args)
     test_log_analysis(args)

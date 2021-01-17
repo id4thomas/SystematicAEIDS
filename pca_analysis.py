@@ -42,4 +42,17 @@ print(np.cumsum(vr))
 
 
 #Kyoto Honeypot 15
+print("Kyoto Honeypot")
+data_path='../../kyoto_data/processed/'
+x_train,y_train=get_hdf5_data(data_path+'train.hdf5',labeled=True)
+
+x_train,y_train=filter_label(x_train,y_train,select_label=SAFE)
+print("Filter Train: Normal:{}, Atk:{}".format(x_train[y_train==0].shape[0],x_train[y_train==1].shape[0]))
+
+x_train_r,reduc=train_reduc(x_train,reduc_type='pca',n_c=x_train.shape[1])
+vr=np.array(reduc.explained_variance_ratio_)
+print("Explained Variance Ratio")
+print(reduc.explained_variance_ratio_)
+print("Cumulative Explained Variance Ratio")
+print(np.cumsum(vr))
 exit()
