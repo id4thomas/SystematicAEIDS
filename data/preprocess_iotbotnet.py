@@ -35,7 +35,7 @@ def preprocess(df,scaler=None):
     # Label/Cat/Sub_Cat
     # df[" Label"] = df[" Label"].map(lambda x : 0 if x=='BENIGN' else 1)
     label_df=df[["Label","Cat","Sub_Cat"]]
-    label_oh=df["Label"].map(lambda x : 0 if x=='Normal' else 1).values
+    label_oh=df["Label"].values
     print("Label",label_df.shape)
     print(label_df.head)
     print(label_oh)

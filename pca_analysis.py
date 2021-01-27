@@ -10,6 +10,36 @@ import scipy.stats as ss
 
 # Analyze Cumulative Explained Variance ratio of training data with PCA
 
+#IoT Botnet Dataset
+print("IoT Botnet")
+data_path='data/iotbotnet/processed/'
+x_train,y_train=get_hdf5_data(data_path+'train.hdf5',labeled=True)
+print("Train: Normal:{}, Atk:{}".format(x_train[y_train==0].shape[0],x_train[y_train==1].shape[0]))
+
+x_train,y_train=filter_label(x_train,y_train,select_label=0)
+print("Train: {}".format(x_train.shape[0]))
+x_train_r,reduc=train_reduc(x_train,reduc_type='pca',n_c=x_train.shape[1])
+vr=np.array(reduc.explained_variance_ratio_)
+print("Explained Variance Ratio")
+print(reduc.explained_variance_ratio_)
+print("Cumulative Explained Variance Ratio")
+print(np.cumsum(vr))
+exit()
+
+#IoTID20 Dataset
+print("IoTID20")
+data_path='data/iotid20/processed/'
+x_train,y_train=get_hdf5_data(data_path+'train.hdf5',labeled=True)
+x_train,y_train=filter_label(x_train,y_train,select_label=SAFE)
+print("Train: {}".format(x_train.shape[0]))
+x_train_r,reduc=train_reduc(x_train,reduc_type='pca',n_c=x_train.shape[1])
+vr=np.array(reduc.explained_variance_ratio_)
+print("Explained Variance Ratio")
+print(reduc.explained_variance_ratio_)
+print("Cumulative Explained Variance Ratio")
+print(np.cumsum(vr))
+exit()
+
 #CIC-IDS 17
 print("CICIDS 17")
 data_path='data/cicids17/processed/'
