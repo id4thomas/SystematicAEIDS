@@ -6,7 +6,7 @@ from matplotlib.figure import Figure
 
 from sklearn import metrics
 from sklearn.metrics import precision_recall_fscore_support,accuracy_score
-from sklearn.metrics import fbeta_score
+from sklearn.metrics import fbeta_score, recall_score, matthews_corrcoef
 
 def get_desc(losses,fpr,tpr,thresholds):
     normalDataLoss=losses[0]
@@ -93,3 +93,11 @@ def prf(y_true,y_pred,ans_label=1,avg_type='binary'):
     f_2=fbeta_score(y_true, y_pred,pos_label=ans_label, average=avg_type, beta=2)
     print("Accuracy : {:0.4f}, Precision : {:0.4f}, Recall : {:0.4f}, F-score : {:0.4f}".format(accuracy, precision, recall, f_score))
     print("F0.5: {:0.4f} F2: {:.04f}".format(f_0_5,f_2))
+
+#False Positive Rate
+def fpr(y_true,y_pred,ans_label=1):
+    # 1- TN/TN+FP
+    return 1-recall_score(y_true,y_pred,pos_label=0)
+
+def mcc(y_true,y_pred,ans_label=1):
+    return matthews_corrcoef(y_true,y_pred)
