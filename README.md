@@ -1,9 +1,12 @@
 # SystematicAEIDS
 Systematic Approach to Building Autoencoder-based IDS
 
-Currently Dirty Code
+WIP for Sensors MDPI
 
-Dataset
+To Add:
+False Positive Rate, Model Decreasing rate
+
+# Dataset
 CIC-IDS 2017
 
 NSL-KDD
@@ -15,6 +18,9 @@ https://sites.google.com/view/iot-network-intrusion-dataset/home
 
 IoT Botnet
 https://sites.google.com/view/iotbotnetdatset/home
+
+IoT-23
+https://www.stratosphereips.org/datasets-iot23
 
 # Weight Folder
 weights_2: 2 Hidden Layers ex. in -> 128 -> 64 -> latent ...
