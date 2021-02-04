@@ -109,10 +109,11 @@ def to_numeric(df, service_list, flag_list, test=False, scaler=None, num_desc=No
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", default=42, type=int,
+    parser.add_argument("--seed", default=10, type=int,
                         help="random seed")
-    parser.add_argument("--data_dir", default="nsl_kdd/original", type=str,
+    parser.add_argument("--data_dir", default="nsl_kdd/split", type=str,
                         help="Data Directory")
+    
     parser.add_argument("--save_dir", default="nsl_kdd/processed", type=str,
                         help="Save Directory")
     args = parser.parse_args()
@@ -137,10 +138,14 @@ if __name__ == "__main__":
     flag.close()
 
     #Train Data
-    train_df=pd.read_csv(data_dir+'/KDDTrain+.txt',header=None)
+    # train_df=pd.read_csv(data_dir+'/KDDTrain+.txt',header=None)
+    train_df=pd.read_csv(data_dir+'/train.csv',header=None)
     train_df,train_label,train_label_types,scaler,num_desc=to_numeric(train_df,serviceData,flagData)
 
-    test_df=pd.read_csv(data_dir+'/KDDTest+.txt',header=None)
+    val_df=pd.read_csv(data_dir+'/val.csv',header=None)
+    val_df,val_label,val_label_types,_,_=to_numeric(val_df,serviceData,flagData,test=True,scaler=scaler, num_desc=num_desc)
+
+    test_df=pd.read_csv(data_dir+'/test.csv',header=None)
     test_df,test_label,test_label_types,_,_=to_numeric(test_df,serviceData,flagData,test=True,scaler=scaler, num_desc=num_desc)
 
     # #Save Data
@@ -168,6 +173,14 @@ if __name__ == "__main__":
         hdf['x'] = train_df.values
         hdf['y'] = train_label
     np.save(save_dir+'/train_label.npy',train_label_types)
+
+    with h5py.File(save_dir+'/val.hdf5', 'w') as hdf:
+        print('Saving file : {}'.format(save_dir+'/val.hdf5'))
+        # hdf['x'] = train.values[:,:test.shape[1]-1]
+        # hdf['y'] = train.values[:,test.shape[1]-1]
+        hdf['x'] = val_df.values
+        hdf['y'] = val_label
+    np.save(save_dir+'/test_label.npy',test_label_types)
 
     with h5py.File(save_dir+'/test.hdf5', 'w') as hdf:
         print('Saving file : {}'.format(save_dir+'/test.hdf5'))
