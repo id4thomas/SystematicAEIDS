@@ -7,6 +7,8 @@ __pycache__/
 # data/
 data/cicids17
 data/nsl_kdd
+data/iotid20
+data/iotbotnet
 
 #Ignore model chkpoint Folder
 chk/
@@ -21,4 +23,9 @@ auc_plot/
 train_cic*.sh
 eval_cic*.sh
 
+#Backup Results
+*_bak.*
 log_bak
+
+#Perf Results
+perf_results/

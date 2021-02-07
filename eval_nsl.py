@@ -11,6 +11,7 @@ from utils.data_utils import *
 from utils.perf_utils import *
 # from utils.reduc_utils import *
 from utils.plot_utils import *
+from utils.dataset_utils import *
 
 from sklearn.metrics import average_precision_score
 from scipy.spatial import distance
@@ -52,6 +53,11 @@ parser.add_argument("--lr", default=1e-4, type=float,
 parser.add_argument("--dist", default="l2", type=str,
                     help="reconstruction dist")
 parser.add_argument('--bal', action='store_true')
+
+parser.add_argument('--dec', action='store_true',
+                    help="Decrease From Input")
+parser.add_argument('--dec_rate',type=float,
+                    help="Decrease From Input Rate")
 args = parser.parse_args()
 
 # Fix seed
@@ -59,56 +65,62 @@ set_seed(args.seed)
 device = torch.device('cuda:0')
 
 #GET ALL DATA!
-data_path='data/nsl_kdd/split/'
-x_val,y_val=get_hdf5_data(data_path+'val.hdf5',labeled=True)
-print("Val: Normal:{}, Atk:{}".format(x_val[y_val==SAFE].shape[0],x_val[y_val!=SAFE].shape[0]))
+data=load_data(dataset="nsl")
+x_val=data['x_val']
+y_val=data['y_val']
+x_test=data['x_test']
+y_test=data['y_test']
 
-#Balanced
-data=make_balanced({'x': x_val, 'y': y_val})
-x_val=data['x']
-y_val=data['y']
-print("Bal Val: Normal:{}, Atk:{}".format(x_val[y_val==SAFE].shape[0],x_val[y_val!=SAFE].shape[0]))
+layer_dec_rates=[0.75,0.5,0.33,0.25]
 
-data_path='data/nsl_kdd/processed/'
-x_test,y_test=get_hdf5_data(data_path+'test.hdf5',labeled=True)
-y_test_type=np.load(data_path+'test_label.npy',allow_pickle=True)
-print("Test Val: Normal:{}, Atk:{}".format(x_test[y_test==SAFE].shape[0],x_test[y_test!=SAFE].shape[0]))
-# exit()
-
-####Balanced Test
-# balanced_test=True
-balanced_test=args.bal
-if balanced_test:
-    data=make_balanced({'x': x_test, 'y': y_test,'y_type':y_test_type},has_type=True)
-    x_test=data['x']
-    y_test=data['y']
-    y_test_type=data['y_type']
-    print("Bal Test: Normal:{}, Atk:{}".format(x_test[y_test==SAFE].shape[0],x_test[y_test!=SAFE].shape[0]))
-    log_name="perf_results/nsl_test_perf_bal.txt"
-    print("Balanced")
+if args.dec:
+    layers=[]
+    for i in range(0,args.num_layers):
+        #Multiplying
+        # layers.append(args.l_dim*2**(i))
+        #Fixed
+        # layers.append(args.size*2**(i))
+        #Decreasing Rate Fixed
+        # layers.append(int(x_train.shape[1]*layer_dec_rates[i]))
+        layers.append(int(x_train.shape[1]*args.dec_rate**(i+1)))
+    layers.append(args.l_dim) 
+    
+    #Set Val for logs
+    # size_val=args.dec_rate
+    size_val="In"
+    model_dec_type="dec"
+    
 else:
-    print("Not Balanced")
-    log_name="perf_results/nsl_test_perf.txt"
-
-exit()
-print(f"Distance {args.dist}")
-#Get Model
-layers=[args.l_dim]
-for i in range(0,args.num_layers):
-    #Multiplying
-    # layers.append(args.l_dim*2**(i))
-    #Fixed
-    layers.append(args.size*2**(i))
-layers.reverse()
+    # Increase from Smallest
+    # layers=[args.l_dim]
+    # for i in range(0,args.num_layers):
+    #     #Multiplying
+    #     # layers.append(args.l_dim*2**(i))
+    #     #Fixed
+    #     layers.append(args.size*2**(i))
+    #     #Decreasing Rate
+    #     # layers.append(int(x_train.shape[0]*layer_dec_rates[i]))
+    #     layers.reverse()
+    
+    #Decrease from Biggest - default 0.5
+    layers=[]
+    for i in range(0,args.num_layers):
+        layers.append(int(args.size*args.dec_rate**(i)))
+    layers.append(args.l_dim)
+    size_val=args.size
+    model_dec_type="fixed"
+    
 model_config={
     'd_dim':x_val.shape[1],
     'layers':layers
 }
-model_desc='AE-{}_{}_{}'.format(args.size,args.l_dim,args.num_layers)
+# model_desc='AE-{}_{}_{}'.format(args.size,args.l_dim,args.num_layers)
+model_desc='AE-{}_{}_{}'.format(args.dec_rate,args.l_dim,args.num_layers)
 print(f"Model {model_desc}")
 model=AE(model_config).to(device)
 
-with open("./weights_{}/nsl_{}_{}_{}_{}_{}.pt".format(args.num_layers,args.size,args.l_dim,args.epoch,args.batch_size,args.seed), "rb") as f:
+# with open("./weights_{}/nsl_{}_{}_{}_{}_{}.pt".format(args.num_layers,args.size,args.l_dim,args.epoch,args.batch_size,args.seed), "rb") as f:
+with open("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.pt".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed), "rb") as f:
     best_model = torch.load(f)
     
 #L2
@@ -116,11 +128,11 @@ model.load_state_dict(best_model["state_l2"])
 
 x_val_cuda = torch.from_numpy(x_val).float().to(device)
 eval_sampler = SequentialSampler(x_val_cuda)
-eval_dataloader = DataLoader(x_val_cuda, sampler=eval_sampler, batch_size=args.batch_size)
+eval_dataloader = DataLoader(x_val_cuda, sampler=eval_sampler, batch_size=5000)
 
 x_test_cuda = torch.from_numpy(x_test).float().to(device)
 test_sampler = SequentialSampler(x_test_cuda)
-test_dataloader = DataLoader(x_test_cuda, sampler=test_sampler, batch_size=args.batch_size)
+test_dataloader = DataLoader(x_test_cuda, sampler=test_sampler, batch_size=5000)
 
 def check_th(val_dist,y_val,z,avg_type='binary'):
     mean_l2=np.mean(val_dist)
@@ -141,7 +153,9 @@ def check_th(val_dist,y_val,z,avg_type='binary'):
     # test_l2_std=ss.zscore(test_l2)
     y_pred[val_dist>th]=1
     precision, recall, f_score, support = precision_recall_fscore_support(y_val, y_pred, pos_label=1, average=avg_type)
-    return f_score,th
+    score=mcc(y_val,y_pred)
+    # score=f_score
+    return score,th
 
 #Val Eval
 model.eval()
@@ -176,16 +190,16 @@ val_dist_norm=(val_dist-comb_dist_mean)/comb_dist_std
 
 avg_type='binary'
 
-best_f1=0
+best_score=0
 best_th=0
 best_z=0
 for z in range(1,1001):
     cand=-1+0.01*z
     # print("\nCand",cand)
 
-    f1,th=check_th(val_dist,y_val,cand,avg_type=avg_type)
-    if best_f1<f1:
-        best_f1=f1
+    score,th=check_th(val_dist,y_val,cand,avg_type=avg_type)
+    if best_score<score:
+        best_score=score
         best_th=th
         best_z=cand
 comb_best_z=best_z
@@ -227,19 +241,42 @@ f_0_5=fbeta_score(y_test, y_pred, pos_label=1, average=avg_type, beta=0.5)
 f_2=fbeta_score(y_test, y_pred,pos_label=1, average=avg_type, beta=2)
 print("F1 {:.5f} F0.5 {:.5f} F2 {:.5f}\n".format(f_score,f_0_5,f_2))
 
+#Added (210201) - FPR, MCC
+test_fpr=fpr(y_test,y_pred)
+test_mcc=mcc(y_test,y_pred)
+print("FPR {:.5f}, MCC {:.5f}".format(test_fpr,test_mcc))
 
+# if not os.path.isfile(log_name):
+#      with open(log_name, "a") as myfile:
+#          myfile.write("size,num_layers,l_dim,epoch,batch,dropout,bn,dist,"+"auc,z,acc,p,r,f,label"+",seed\n")
+         
+
+# with open(log_name, "a") as myfile:
+#     #L2
+#     myfile.write(f"{args.size},{args.num_layers},{args.l_dim},")
+#     myfile.write(f"{args.epoch},{args.batch_size},")
+#     myfile.write(f"{args.do},{args.bn},")
+#     #PERF
+#     # myfile.write("l2,{:.5f},{},".format(model_best['auc_l2'],model_best['epoch_l2']))
+#     myfile.write("{},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},total,".format(args.dist,test_auc,comb_best_z,accuracy,precision,recall,f_score))
+#     ##
+#     myfile.write(f"{args.seed}\n")
+
+log_name=f"perf_results/nsl_test_perf_{model_dec_type}.txt"
 
 if not os.path.isfile(log_name):
      with open(log_name, "a") as myfile:
-         myfile.write("size,num_layers,l_dim,epoch,batch,dropout,bn,dist,"+"auc,z,acc,p,r,f,label"+",seed\n")
-
+         myfile.write("size,num_layers,l_dim,epoch,batch,dropout,bn,dist,"+"auc,z,acc,p,r,f,"+"fpr,mcc,"+"label,seed,dec_rate\n")
+         
 with open(log_name, "a") as myfile:
     #L2
-    myfile.write(f"{args.size},{args.num_layers},{args.l_dim},")
+    myfile.write(f"{size_val},{args.num_layers},{args.l_dim},")
     myfile.write(f"{args.epoch},{args.batch_size},")
     myfile.write(f"{args.do},{args.bn},")
     #PERF
     # myfile.write("l2,{:.5f},{},".format(model_best['auc_l2'],model_best['epoch_l2']))
-    myfile.write("{},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},total,".format(args.dist,test_auc,comb_best_z,accuracy,precision,recall,f_score))
+    myfile.write("{},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},".format(args.dist,test_auc,comb_best_z,accuracy,precision,recall,f_score))
+    #Added (210201) - FPR, MCC
+    myfile.write("{:.5f},{:.5f},".format(test_fpr,test_mcc))
     ##
-    myfile.write(f"{args.seed}\n")
+    myfile.write(f"total,{args.seed},{args.dec_rate}\n")

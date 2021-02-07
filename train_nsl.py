@@ -11,6 +11,7 @@ from utils.data_utils import *
 from utils.perf_utils import *
 # from utils.reduc_utils import *
 from utils.plot_utils import *
+from utils.dataset_utils import *
 
 from sklearn.metrics import average_precision_score
 from scipy.spatial import distance
@@ -36,13 +37,14 @@ parser.add_argument("--l_dim", default=10, type=int,
 parser.add_argument("--num_layers", default=2, type=int,
                     help="number of layers")
 parser.add_argument("--size", default=64, type=int,
-                    help="Smallest Hid Size")
+                    help="Biggest Hid Size")
 #Regularization
 parser.add_argument("--do", default=0, type=float,
                     help="dropout rate")
 parser.add_argument("--bn", default=0, type=int,
                     help="batch norm: 1 to use")
 
+#Training Params
 parser.add_argument("--epoch", default=10, type=int,
                     help="training epochs")
 parser.add_argument("--batch_size", default=8192, type=int,
@@ -50,8 +52,14 @@ parser.add_argument("--batch_size", default=8192, type=int,
 parser.add_argument("--lr", default=1e-4, type=float,
                     help="learning rate")
 
-parser.add_argument("--data", default="cic", type=str,
-                        help="Dataset")
+
+parser.add_argument('--dec', action='store_true',
+                    help="Hidden layer sizes decreases From Input")
+parser.add_argument('--dec_rate',default=0.5,type=float,
+                    help="Decrease From Input Rate")
+
+# parser.add_argument("--data", default="nsl", type=str,
+#                         help="Dataset")
 args = parser.parse_args()
 
 # Fix seed
@@ -59,40 +67,87 @@ set_seed(args.seed)
 device = torch.device('cuda:0')
 
 ##### Load Data #####
-data_path='data/nsl_kdd/split/'
-x_train,y_train=get_hdf5_data(data_path+'train.hdf5',labeled=True)
-x_val,y_val=get_hdf5_data(data_path+'val.hdf5',labeled=True)
+# data_path='data/nsl_kdd/processed/'
+# x_train,y_train=get_hdf5_data(data_path+'train.hdf5',labeled=True)
+# x_val,y_val=get_hdf5_data(data_path+'val.hdf5',labeled=True)
 
-print("Val: Normal:{}, Atk:{}".format(x_val[y_val==SAFE].shape[0],x_val[y_val!=SAFE].shape[0]))
+# print("Val: Normal:{}, Atk:{}".format(x_val[y_val==SAFE].shape[0],x_val[y_val!=SAFE].shape[0]))
 
-#Filter atk from train
-x_train,y_train=filter_label(x_train,y_train,select_label=SAFE)
-print("Filter Train: Normal:{}, Atk:{}".format(x_train[y_train==0].shape[0],x_train[y_train==1].shape[0]))
+# #Filter atk from train
+# x_train,y_train=filter_label(x_train,y_train,select_label=SAFE)
+# print("Filter Train: Normal:{}, Atk:{}".format(x_train[y_train==0].shape[0],x_train[y_train==1].shape[0]))
 
-#Balanced
-data=make_balanced({'x': x_val, 'y': y_val})
-x_val=data['x']
-y_val=data['y']
-print("Bal Val: Normal:{}, Atk:{}".format(x_val[y_val==SAFE].shape[0],x_val[y_val!=SAFE].shape[0]))
+# #Balanced
+# data=make_balanced({'x': x_val, 'y': y_val})
+# x_val=data['x']
+# y_val=data['y']
+# print("Bal Val: Normal:{}, Atk:{}".format(x_val[y_val==SAFE].shape[0],x_val[y_val!=SAFE].shape[0]))
 
+data=load_data(dataset="nsl")
+x_train=data['x_train']
+y_train=data['y_train']
+x_val=data['x_val']
+y_val=data['y_val']
 print(x_train.shape)
-exit()
+# exit()
 
 #Get Model
-layers=[args.l_dim]
-for i in range(0,args.num_layers):
-    #Multiplying
-    # layers.append(args.l_dim*2**(i))
-    #Fixed
-    layers.append(args.size*2**(i))
-layers.reverse()
+# layers=[args.l_dim]
+# for i in range(0,args.num_layers):
+#     #Multiplying
+#     # layers.append(args.l_dim*2**(i))
+#     #Fixed
+#     layers.append(args.size*2**(i))
+# layers.reverse()
+
+layer_dec_rates=[0.75,0.5,0.33,0.25]
+
+if args.dec:
+    layers=[]
+    for i in range(0,args.num_layers):
+        #Multiplying
+        # layers.append(args.l_dim*2**(i))
+        #Fixed
+        # layers.append(args.size*2**(i))
+        #Decreasing Rate Fixed
+        # layers.append(int(x_train.shape[1]*layer_dec_rates[i]))
+        layers.append(int(x_train.shape[1]*args.dec_rate**(i+1)))
+    layers.append(args.l_dim) 
+    
+    #Set Val for logs
+    # size_val=args.dec_rate
+    size_val="In"
+    model_dec_type="dec"
+    
+else:
+    # Increase from Smallest
+    # layers=[args.l_dim]
+    # for i in range(0,args.num_layers):
+    #     #Multiplying
+    #     # layers.append(args.l_dim*2**(i))
+    #     #Fixed
+    #     layers.append(args.size*2**(i))
+    #     #Decreasing Rate
+    #     # layers.append(int(x_train.shape[0]*layer_dec_rates[i]))
+    #     layers.reverse()
+    
+    #Decrease from Biggest - default 0.5
+    layers=[]
+    for i in range(0,args.num_layers):
+        layers.append(int(args.size*args.dec_rate**(i)))
+    layers.append(args.l_dim)
+    size_val=args.size
+    model_dec_type="fixed"
+    # log_file="perf_results/nsl_train_log_fixed.txt"
+        
 model_config={
     'd_dim':x_train.shape[1],
     'layers':layers
 }
-model_desc='AE-{}_{}_{}'.format(args.size,args.l_dim,args.num_layers)
+
+model_desc='AE-{}_{}_{}'.format(args.dec_rate,args.l_dim,args.num_layers)
 model=AE(model_config).to(device)
-# wandb.watch(model)
+wandb.watch(model)
 
 #Xavier Init Weights
 def init_weights(m):
@@ -103,7 +158,7 @@ model.apply(init_weights)
 
 #Check Model
 from torchsummary import summary
-print(summary(model,(args.batch_size,80)))
+print(summary(model,(args.batch_size,x_train.shape[1])))
 # exit()
 
 #Train
@@ -182,24 +237,6 @@ with torch.no_grad():
 
 val_dist_l2=np.mean(np.square(x_val-pred_val),axis=1)
 val_dist_cos=[distance.cosine(x_val[i],pred_val[i]) for i in range(x_val.shape[0])]
-# val_dist_safe=val_dist_l2[y_val==0]
-
-# comb_dist_mean=np.mean(val_dist_safe)
-# comb_dist_std=np.std(val_dist_safe)
-# val_dist_norm=(val_dist_l2-comb_dist_mean)/comb_dist_std
-
-# best_f1=0
-# best_th=0
-# best_z=0
-# for z in range(1,1001):
-#     cand=-1+0.01*z
-#     # print("\nCand",cand)
-
-#     f1,th=check_th(val_dist_l2,y_val,cand,avg_type='binary')
-#     if best_f1<f1:
-#         best_f1=f1
-#         best_th=th
-#         best_z=cand
 
 auc_l2,_,_=make_roc(val_dist_l2,y_val,ans_label=ATK)
 auc_cos,_,_=make_roc(val_dist_cos,y_val,ans_label=ATK)
@@ -251,25 +288,7 @@ for epoch in range(args.epoch):
 
     val_dist_l2=np.mean(np.square(x_val-pred_val),axis=1)
     val_dist_cos=[distance.cosine(x_val[i],pred_val[i]) for i in range(x_val.shape[0])]
-    # val_dist_safe=val_dist_l2[y_val==0]
 
-    # comb_dist_mean=np.mean(val_dist_safe)
-    # comb_dist_std=np.std(val_dist_safe)
-    # val_dist_norm=(val_dist_l2-comb_dist_mean)/comb_dist_std
-
-    # best_f1=0
-    # best_th=0
-    # best_z=0
-    # for z in range(1,1001):
-    #     cand=-1+0.01*z
-    #     # print("\nCand",cand)
-
-    #     f1,th=check_th(val_dist_l2,y_val,cand,avg_type='binary')
-    #     if best_f1<f1:
-    #         best_f1=f1
-    #         best_th=th
-    #         best_z=cand
-            
     print("iter {}: Train: {:.5f}, Val: {:.5f}".format(batch_iter, train_loss,sum(val_loss)/len(val_loss)))
 
     print("\nL2")
@@ -308,30 +327,33 @@ for epoch in range(args.epoch):
 
 
 print("\nTrain Complete")
-if not os.path.isfile("train_auc.txt"):
-     with open("train_auc.txt", "a") as myfile:
-         myfile.write("size,num_layers,l_dim,epoch,batch,dropout,bn,dist,best_auc,best_ep,seed\n")
-with open("train_auc.txt", "a") as myfile:
+
+log_file=f"perf_results/nsl_train_log_{model_dec_type}.txt"
+if not os.path.isfile(log_file):
+     with open(log_file, "a") as myfile:
+         myfile.write("size,num_layers,l_dim,epoch,batch,dropout,bn,dist,best_auc,best_ep,seed,dec_rate\n")
+with open(log_file, "a") as myfile:
     #L2
-    myfile.write(f"{args.size},{args.num_layers},{args.l_dim},")
+    myfile.write(f"{size_val},{args.num_layers},{args.l_dim},")
     myfile.write(f"{args.epoch},{args.batch_size},")
     myfile.write(f"{args.do},{args.bn},")
     myfile.write("l2,{:.5f},{},".format(model_best['auc_l2'],model_best['epoch_l2']))
-    myfile.write(f"{args.seed}\n")
+    myfile.write(f"{args.seed},{args.dec_rate}\n")
     
     myfile.write(f"{args.size},{args.num_layers},{args.l_dim},")
     myfile.write(f"{args.epoch},{args.batch_size},")
     myfile.write(f"{args.do},{args.bn},")
     myfile.write("cos,{:.5f},{},".format(model_best['auc_cos'],model_best['epoch_cos']))
-    myfile.write(f"{args.seed}\n")
+    myfile.write(f"{args.seed},{args.dec_rate}\n")
     
     # myfile.write(f"{args.do},{args.bn},")
     # myfile.write("Val L2 Best {:.5f} at {}\n".format(model_best['auc_l2'],model_best['epoch_l2']))
     # myfile.write("Val Cos Best {:.5f} at {}\n".format(model_best['auc_cos'],model_best['epoch_cos']))
 # exit()
 #Make Folder
-if not os.path.exists('weights_{}'.format(args.num_layers)):
-    os.makedirs('weights_{}'.format(args.num_layers))
+
+if not os.path.exists('weights_{}_{}_{}'.format(args.num_layers,model_dec_type,args.dec_rate)):
+    os.makedirs('weights_{}_{}_{}'.format(args.num_layers,model_dec_type,args.dec_rate))
 if not os.path.exists('loss_plot'):
     os.makedirs('loss_plot')
 if not os.path.exists('auc_plot'):
@@ -339,7 +361,7 @@ if not os.path.exists('auc_plot'):
 # if not os.path.exists('f1_plot'):
 #     os.makedirs('f1_plot') 
 
-with open("./weights_{}/cic_{}_{}_{}_{}_{}.pt".format(args.num_layers,args.size,args.l_dim,args.epoch,args.batch_size,args.seed), "wb") as f:
+with open("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.pt".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed), "wb") as f:
     torch.save(
         {
             "state_l2": model_best['state_l2'],
@@ -349,13 +371,13 @@ with open("./weights_{}/cic_{}_{}_{}_{}_{}.pt".format(args.num_layers,args.size,
     )
 # exit()
 #Loss Plot
-loss_fig=plot_losses(train_hist['loss'],val_hist['loss'],"Loss History")
-loss_fig.savefig('./loss_plot/cic_{}_{}_{}_{}_{}_{}.png'.format(args.num_layers,args.size,args.l_dim,args.epoch,args.batch_size,args.seed))
+# loss_fig=plot_losses(train_hist['loss'],val_hist['loss'],"Loss History")
+# loss_fig.savefig('./loss_plot/nsl_{}_{}_{}_{}_{}_{}_{}.png'.format(model_dec_type,args.num_layers,size_val,args.l_dim,args.epoch,args.batch_size,args.seed))
 
-# #AUC Plot
-auc_fig=plot_auc(val_hist['auc_l2'])
-auc_fig.savefig('./auc_plot/cic_l2_{}_{}_{}_{}_{}.png'.format(args.num_layers,args.size,args.l_dim,args.epoch,args.batch_size,args.seed))
+# # #AUC Plot
+# auc_fig=plot_auc(val_hist['auc_l2'])
+# auc_fig.savefig('./auc_plot/nsl_{}_l2_{}_{}_{}_{}_{}.png'.format(model_dec_type,args.num_layers,size_val,args.l_dim,args.epoch,args.batch_size,args.seed))
 
-auc_fig=plot_auc(val_hist['auc_cos'])
-auc_fig.savefig('./auc_plot/cic_cos_{}_{}_{}_{}_{}.png'.format(args.num_layers,args.size,args.l_dim,args.epoch,args.batch_size,args.seed))
-exit()
+# auc_fig=plot_auc(val_hist['auc_cos'])
+# auc_fig.savefig('./auc_plot/nsl_{}_cos_{}_{}_{}_{}_{}.png'.format(model_dec_type,args.num_layers,size_val,args.l_dim,args.epoch,args.batch_size,args.seed))
+# exit()
