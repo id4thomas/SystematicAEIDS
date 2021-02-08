@@ -22,6 +22,11 @@ https://sites.google.com/view/iotbotnetdatset/home
 IoT-23
 https://www.stratosphereips.org/datasets-iot23
 
+# Evaluation Metric
+Precision,Recall,F1
+False Positive Rate
+Matthews Correlation Coefficient
+
 # Weight Folder
 weights_2: 2 Hidden Layers ex. in -> 128 -> 64 -> latent ...
 

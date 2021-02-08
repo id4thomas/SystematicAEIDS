@@ -10,14 +10,14 @@ def load_data(dataset="cic"):
     
     if dataset=="cic":
         #Train
-        data_path='../data/cicids17/processed/'
+        data_path='data/cicids17/processed/'
         train_name='mon'
         x_train,y_train=get_hdf5_data(data_path+'{}.hdf5'.format(train_name),labeled=False)
         print("Train: {}".format(x_train.shape[0]))
         # print("Train: Normal:{}, Atk:{}".format(x_train[y_train=='BENIGN'].shape[0],x_train[y_train!='BENIGN'].shape[0]))
 
         #Val
-        data_path='../data/cicids17/split/'
+        data_path='data/cicids17/split/'
         x_val,_=get_hdf5_data(data_path+'val.hdf5',labeled=False)
         y_val_type=np.load(data_path+'val_label.npy',allow_pickle=True)
         y_val=np.zeros(x_val.shape[0])
@@ -68,7 +68,7 @@ def load_data(dataset="cic"):
         # data['y_test_type']=y_test_type
 
     elif dataset=="iotbotnet":
-        data_path='../data/iotbotnet/processed/'
+        data_path='data/iotbotnet/processed/'
         x_train,y_train=get_hdf5_data(data_path+'train.hdf5',labeled=True)
         x_train,y_train=filter_label(x_train,y_train,select_label=SAFE)
         print("Filter Train: Normal:{}, Atk:{}".format(x_train[y_train==0].shape[0],x_train[y_train==1].shape[0]))

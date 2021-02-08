@@ -135,9 +135,9 @@ test_sampler = SequentialSampler(x_test_cuda)
 test_dataloader = DataLoader(x_test_cuda, sampler=test_sampler, batch_size=5000)
 
 def check_th(val_dist,y_val,z,avg_type='binary'):
-    mean_l2=np.mean(val_dist)
-    var_l2=np.var(val_dist)
-    stddev_l2=np.std(val_dist)
+    # mean_l2=np.mean(val_dist)
+    # var_l2=np.var(val_dist)
+    # stddev_l2=np.std(val_dist)
 
     #Get value with only safe
     val_dist_safe=val_dist[y_val==0]
@@ -181,12 +181,6 @@ comb_dist_std=np.std(val_dist_safe)
 
 val_dist_norm=(val_dist-comb_dist_mean)/comb_dist_std
 
-val_dist_safe=val_dist[y_val==0]
-
-comb_dist_mean=np.mean(val_dist_safe)
-comb_dist_std=np.std(val_dist_safe)
-
-val_dist_norm=(val_dist-comb_dist_mean)/comb_dist_std
 
 avg_type='binary'
 

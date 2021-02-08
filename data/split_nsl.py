@@ -14,7 +14,7 @@ SAFE=0
 parser = argparse.ArgumentParser()
 
 parser.add_argument("--seed", default=10, type=int,
-                    help="random seed for reproductability")
+                    help="random seed for reproduceability")
 parser.add_argument("--val", default=0.1, type=float,
                     help="Validation Ratio")
 parser.add_argument("--data_dir", default="nsl_kdd/processed", type=str,
