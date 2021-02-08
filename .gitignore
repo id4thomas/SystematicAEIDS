@@ -20,8 +20,8 @@ loss_plot/
 auc_plot/
 
 #Temporary Scripts
-train_cic*.sh
-eval_cic*.sh
+train_*.sh
+eval_*.sh
 
 #Backup Results
 *_bak.*
