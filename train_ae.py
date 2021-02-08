@@ -126,7 +126,7 @@ print(summary(model,(args.batch_size,x_train.shape[1])))
 # exit()
 
 #Train
-optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
 # optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
 model.zero_grad()
@@ -316,7 +316,7 @@ with open(log_file, "a") as myfile:
     # myfile.write("Val Cos Best {:.5f} at {}\n".format(model_best['auc_cos'],model_best['epoch_cos']))
 # exit()
 #Make Folder
-weight_folder=f"weights_{args.num_layers}_{args.dec_rate}_{model_dec_type}"
+weight_folder=f"weights_{args.num_layers}_{model_dec_type}_{args.dec_rate}"
 
 # if not os.path.exists('weights_{}_{}_{}'.format(args.num_layers,model_dec_type,args.dec_rate)):
 #     os.makedirs('weights_{}_{}_{}'.format(args.num_layers,model_dec_type,args.dec_rate))
