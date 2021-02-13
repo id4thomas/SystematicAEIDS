@@ -23,6 +23,9 @@ IoT-23
 https://www.stratosphereips.org/datasets-iot23
 
 N-BaIoT
+https://archive.ics.uci.edu/ml/datasets/detection_of_IoT_botnet_attacks_N_BaIoT#
+Danmini_Doorbell
+Ecobee_Thermostat
 
 # Evaluation Metric
 Precision,Recall,F1

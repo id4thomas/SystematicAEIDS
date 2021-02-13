@@ -12,10 +12,13 @@ SAFE=0
 parser = argparse.ArgumentParser()
 parser.add_argument("--seed", default=10, type=int,
                     help="random seed")
-parser.add_argument("--data_dir", default="nbaiot/Danmini_Doorbell", type=str,
+parser.add_argument("--data_dir", default="nbaiot", type=str,
                     help="Data Directory")
 parser.add_argument("--save_dir", default="nbaiot/data", type=str,
                     help="Save Directory")
+parser.add_argument("--device", default="Danmini_Doorbell", type=str,
+                    help="Device Name")
+
 args = parser.parse_args()
 set_seed(args.seed)
 
@@ -26,7 +29,7 @@ save_dir=args.save_dir
 if not os.path.exists(save_dir):
     os.makedirs(save_dir)
     
-data_dir=args.data_dir
+data_dir=args.data_dir+f'/{args.device}'
 
 
 benign_df=pd.read_csv(data_dir+'/benign_traffic.csv')
@@ -60,7 +63,7 @@ for cat_f in os.scandir(data_dir):
                 sub_cat=sub_cat_dir[sub_cat_dir.rfind('/')+1:sub_cat_dir.rfind('.')]
                 print(sub_cat)
                 atk_df=pd.read_csv(sub_cat_f.path)
-                atk_df["Cat"]=1
+                atk_df["Label"]=1
                 atk_df["Cat"]=cat
                 atk_df["Sub_cat"]=sub_cat
                 print(atk_df.shape)
@@ -70,34 +73,5 @@ print(atk_df["Cat"])
 print(atk_df["Sub_cat"])
 
 df=pd.concat([benign_df,atk_df],axis=0)
-device_name=args.data_dir[args.data_dir.rfind('/')+1:]
-print(device_name)
-df.to_csv(save_dir+'/'+device_name+'.csv',index=False)
-exit()
+df.to_csv(save_dir+'/'+args.device+'.csv',index=False)
 
-df=pd.read_csv(data_dir+'/IoT-BoT.csv')
-#Split 8:1:1
-train = df.sample(frac = 0.8)
-test = df.drop(train.index).sample(frac = 0.5)
-val = df.drop(train.index).drop(test.index)
-
-#Data Count
-print("Train")
-print(train.Label.value_counts())
-print(train.Cat.value_counts())
-
-#Data Count
-print("val")
-print(val.Label.value_counts())
-print(val.Cat.value_counts())
-
-#Data Count
-print("Test")
-print(test.Label.value_counts())
-print(test.Cat.value_counts())
-
-# exit()
-
-train.to_csv(save_dir+'/train.csv')
-val.to_csv(save_dir+'/val.csv')
-test.to_csv(save_dir+'/test.csv')
