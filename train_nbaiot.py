@@ -11,26 +11,29 @@ from utils.data_utils import *
 from utils.perf_utils import *
 # from utils.reduc_utils import *
 from utils.plot_utils import *
+from utils.dataset_utils import *
+
+#Preprocess Script
+from data.preprocess_nbaiot import *
 
 from sklearn.metrics import average_precision_score
 from scipy.spatial import distance
+
 
 import copy
 import numpy as np
 
 import wandb
 
-from sklearn.model_selection import KFold
-from data.preprocess_iotid20 import *
-
 #Saving
 import joblib
 import pickle
 from torchsummary import summary
+
 ATK=1
 SAFE=0
 
-## Argument Setting
+# Argument Setting
 parser = argparse.ArgumentParser()
 
 parser.add_argument("--seed", default=42, type=int,
@@ -62,24 +65,19 @@ parser.add_argument('--dec', action='store_true',
                     help="Hidden layer sizes decreases From Input")
 parser.add_argument('--dec_rate',default=0.5,type=float,
                     help="Decrease From Input Rate")
+parser.add_argument("--device", default="Danmini_Doorbell", type=str,
+                    help="Device Name")
 
-parser.add_argument('--dist_cos', action='store_true',
-                    help="Use Cosine as Dist")
-
-# parser.add_argument("--data", default="iotid20", type=str,
-#                         help="Dataset")
 args = parser.parse_args()
-wandb.init(project="svcc-iotid20")
+wandb.init(project="sensors-nbaiot")
 # Fix seed
 set_seed(args.seed)
 device = torch.device('cuda:0')
 
 ##### Load Data #####
-data_dir='data/iotid20/split'
-train=pd.read_csv(data_dir+'/train.csv')
-val=pd.read_csv(data_dir+'/val.csv')
-
-
+data_dir='data/nbaiot/split'
+train=pd.read_csv(data_dir+f'/{args.device}_train.csv')
+val=pd.read_csv(data_dir+f'/{args.device}_val.csv')
 
 
 def init_weights(m):
@@ -140,20 +138,20 @@ def check_th(dist,y,mean,stddev,z,avg_type='binary'):
 best_val_mcc=0
 best_weights=None
 best_scaler=None
-# best_num_desc=None
-
+best_num_desc=None
+best_fold=0
 best_std=0
 best_mean=0
 best_z=0
+k=0
 
-
-log_name="perf_results/iotid20_train_perf_fixed.txt"
-
+log_name=f"perf_results/nba_{args.device}_train_perf_fixed.txt"
 if not os.path.isfile(log_name):
      with open(log_name, "a") as myfile:
          myfile.write("size,num_layers,l_dim,epoch,batch,dropout,bn,dist,"+"auc,z,acc,p,r,f,"+"fpr,mcc,"+"label,seed,dec_rate,best_epoch\n")
          
-model_desc='AE{}-{}_{}_{}'.format(args.size,args.dec_rate,args.l_dim,args.num_layers)
+
+model_desc='{}-{}_{}_{}_{}'.format(args.device,args.size,args.dec_rate,args.l_dim,args.num_layers)
 
 #Preprocess
 train_df,_,y_train,scaler=preprocess(train)  
@@ -334,39 +332,65 @@ with open(log_name, "a") as myfile:
     myfile.write(f"total,{args.seed},{args.dec_rate},{model_best['epoch_l2']}\n")
     
 
-    joblib.dump(best_scaler, "./weights_{}_{}_{}/iotid20_{}_{}_{}_{}_{}.scaler".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed)) 
-    # pickle.dump(best_num_desc,open("./weights_{}_{}_{}/iotid20_{}_{}_{}_{}_{}.numdesc".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed), 'wb'))
-    # best_num_desc.to_csv(,header=None,index=None)
-    with open("./weights_{}_{}_{}/iotid20_{}_{}_{}_{}_{}.pt".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed), "wb") as f:
-        torch.save(
-            {
-                "state_l2": best_weights,
-                # "state_cos": model_best['state_cos'],
-            },
-            f,
-        )
+joblib.dump(best_scaler, "./weights_{}_{}_{}/nba_{}_{}_{}_{}_{}_{}.scaler".format(args.num_layers,model_dec_type,args.dec_rate,args.device,size_val,args.l_dim,args.epoch,args.batch_size,args.seed)) 
+# best_num_desc.to_csv(,header=None,index=None)
+with open("./weights_{}_{}_{}/nba_{}_{}_{}_{}_{}_{}.pt".format(args.num_layers,model_dec_type,args.dec_rate,args.device,size_val,args.l_dim,args.epoch,args.batch_size,args.seed), "wb") as f:
+    torch.save(
+        {
+            "state_l2": best_weights,
+            # "state_cos": model_best['state_cos'],
+        },
+        f,
+    )
     
 print("\nTrain Complete")
-
-# best_num_desc=pickle.load(open("./weights_{}_{}_{}/iotid20_{}_{}_{}_{}_{}.numdesc".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed), 'rb'))
-best_scaler=joblib.load("./weights_{}_{}_{}/iotid20_{}_{}_{}_{}_{}.scaler".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed))
-with open("./weights_{}_{}_{}/iotid20_{}_{}_{}_{}_{}.th".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed),'w') as f:
-    f.write(f'{str(best_mean)}\n{str(best_std)}\n{str(best_z)}')
+    
+best_scaler=joblib.load("./weights_{}_{}_{}/nba_{}_{}_{}_{}_{}_{}.scaler".format(args.num_layers,model_dec_type,args.dec_rate,args.device,size_val,args.l_dim,args.epoch,args.batch_size,args.seed))
+with open("./weights_{}_{}_{}/nba_{}_{}_{}_{}_{}_{}.th".format(args.num_layers,model_dec_type,args.dec_rate,args.device,size_val,args.l_dim,args.epoch,args.batch_size,args.seed),'w') as f:
+  f.write(f'{str(best_mean)}\n{str(best_std)}\n{str(best_z)}')
   
+if args.dec:
+    layers=[]
+    for i in range(0,args.num_layers):
+        layers.append(int(x_train.shape[1]*args.dec_rate**(i+1)))
+    layers.append(args.l_dim) 
+    
+    #Set Val for logs
+    # size_val=args.dec_rate
+    size_val="In"
+    model_dec_type="dec"
+    
+else:
+    #Decrease from Biggest - default 0.5
+    layers=[]
+    for i in range(0,args.num_layers):
+        layers.append(int(args.size*args.dec_rate**(i)))
+    layers.append(args.l_dim)
+    size_val=args.size
+    model_dec_type="fixed"
+    
+model_config={
+    'd_dim':x_train.shape[1],
+    'layers':layers
+} 
+model=AE(model_config).to(device)
+model.load_state_dict(best_weights)
 
-test=pd.read_csv(data_dir+'/test.csv')
+test=pd.read_csv(data_dir+f'/{args.device}_test.csv')
 test_df,_,y_test,_=preprocess(test,scaler=best_scaler)
+
 x_test=test_df.values
 x_test_cuda = torch.from_numpy(x_test).float().to(device)
 eval_sampler = SequentialSampler(x_test_cuda)
 eval_dataloader = DataLoader(x_test_cuda, sampler=eval_sampler, batch_size=args.batch_size)
-pred_test,_=get_model_preds(model,eval_dataloader)
 
+pred_test,_=get_model_preds(model,eval_dataloader)
 test_dist=np.mean(np.square(x_test-pred_test),axis=1)
 test_dist_norm=(test_dist-best_mean)/best_std
 
 y_pred=np.zeros_like(y_test)
 y_pred[test_dist_norm>best_z]=1
+# y_pred[test_dist_norm>comb_best_z]=1
 
 test_auc,_,_=make_roc(test_dist,y_test,ans_label=ATK)
 prf(y_test,y_pred,ans_label=1,avg_type='binary')
@@ -381,10 +405,8 @@ test_fpr=fpr(y_test,y_pred)
 test_mcc=mcc(y_test,y_pred)
 print("FPR {:.5f}, MCC {:.5f}".format(test_fpr,test_mcc))
 
-if args.dist_cos:
-    log_name=f"perf_results/iotid20_{args.size}_{args.num_layers}_cos.csv"
-else:
-    log_name=f"perf_results/iotid20_{args.size}_{args.num_layers}.csv"
+# log_name=f"perf_results/iotbotnet_test_perf_fixed.txt"
+log_name=f"perf_results/nba_{args.device}_{args.size}_{args.num_layers}.csv"
 
 if not os.path.isfile(log_name):
      with open(log_name, "a") as myfile:
@@ -397,13 +419,11 @@ with open(log_name, "a") as myfile:
     myfile.write(f"{args.do},{args.bn},")
     #PERF
     # myfile.write("l2,{:.5f},{},".format(model_best['auc_l2'],model_best['epoch_l2']))
-    if args.dist_cos:
-        myfile.write("cos,{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},".format(test_auc,comb_best_z,accuracy,precision,recall,f_score))
-    else:
-        myfile.write("l2,{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},".format(test_auc,comb_best_z,accuracy,precision,recall,f_score))
+    myfile.write("l2,{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},".format(test_auc,comb_best_z,accuracy,precision,recall,f_score))
     #Added (210201) - FPR, MCC
     myfile.write("{:.5f},{:.5f},".format(test_fpr,test_mcc))
     ##
     myfile.write(f"total,{args.seed},{args.dec_rate}\n")
-
 exit()
+
+

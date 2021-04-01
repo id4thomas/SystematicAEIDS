@@ -13,14 +13,21 @@ from utils.perf_utils import *
 from utils.plot_utils import *
 from utils.dataset_utils import *
 
+#Preprocess Script
+from data.preprocess_nsl import *
+
 from sklearn.metrics import average_precision_score
 from scipy.spatial import distance
+
 
 import copy
 import numpy as np
 
 import wandb
-wandb.init(project="svcc-nslkdd")
+
+#Saving
+import joblib
+import pickle
 
 ATK=1
 SAFE=0
@@ -58,128 +65,123 @@ parser.add_argument('--dec', action='store_true',
 parser.add_argument('--dec_rate',default=0.5,type=float,
                     help="Decrease From Input Rate")
 
+parser.add_argument('--dist_cos', action='store_true',
+                    help="Use Cosine as Dist")
+
 # parser.add_argument("--data", default="nsl", type=str,
 #                         help="Dataset")
 args = parser.parse_args()
-
+wandb.init(project="svcc-nslkdd")
 # Fix seed
 set_seed(args.seed)
 device = torch.device('cuda:0')
 
 ##### Load Data #####
-# data_path='data/nsl_kdd/processed/'
-# x_train,y_train=get_hdf5_data(data_path+'train.hdf5',labeled=True)
-# x_val,y_val=get_hdf5_data(data_path+'val.hdf5',labeled=True)
+data_dir='data/nsl_kdd/split'
+train=pd.read_csv(data_dir+'/train.csv',header=None)
+val=pd.read_csv(data_dir+'/val.csv',header=None)
 
-# print("Val: Normal:{}, Atk:{}".format(x_val[y_val==SAFE].shape[0],x_val[y_val!=SAFE].shape[0]))
+service = open(data_dir+'/service.txt', 'r')
+serviceData = service.read().split('\n')
+service.close()
 
-# #Filter atk from train
-# x_train,y_train=filter_label(x_train,y_train,select_label=SAFE)
-# print("Filter Train: Normal:{}, Atk:{}".format(x_train[y_train==0].shape[0],x_train[y_train==1].shape[0]))
+flag = open(data_dir+'/flag.txt', 'r')
+flagData = flag.read().split('\n')
+flag.close()
 
-# #Balanced
-# data=make_balanced({'x': x_val, 'y': y_val})
-# x_val=data['x']
-# y_val=data['y']
-# print("Bal Val: Normal:{}, Atk:{}".format(x_val[y_val==SAFE].shape[0],x_val[y_val!=SAFE].shape[0]))
 
-data=load_data(dataset="nsl")
-x_train=data['x_train']
-y_train=data['y_train']
-x_val=data['x_val']
-y_val=data['y_val']
-print(x_train.shape)
-# exit()
-
-#Get Model
-# layers=[args.l_dim]
-# for i in range(0,args.num_layers):
-#     #Multiplying
-#     # layers.append(args.l_dim*2**(i))
-#     #Fixed
-#     layers.append(args.size*2**(i))
-# layers.reverse()
-
-layer_dec_rates=[0.75,0.5,0.33,0.25]
-
-if args.dec:
-    layers=[]
-    for i in range(0,args.num_layers):
-        #Multiplying
-        # layers.append(args.l_dim*2**(i))
-        #Fixed
-        # layers.append(args.size*2**(i))
-        #Decreasing Rate Fixed
-        # layers.append(int(x_train.shape[1]*layer_dec_rates[i]))
-        layers.append(int(x_train.shape[1]*args.dec_rate**(i+1)))
-    layers.append(args.l_dim) 
-    
-    #Set Val for logs
-    # size_val=args.dec_rate
-    size_val="In"
-    model_dec_type="dec"
-    
-else:
-    # Increase from Smallest
-    # layers=[args.l_dim]
-    # for i in range(0,args.num_layers):
-    #     #Multiplying
-    #     # layers.append(args.l_dim*2**(i))
-    #     #Fixed
-    #     layers.append(args.size*2**(i))
-    #     #Decreasing Rate
-    #     # layers.append(int(x_train.shape[0]*layer_dec_rates[i]))
-    #     layers.reverse()
-    
-    #Decrease from Biggest - default 0.5
-    layers=[]
-    for i in range(0,args.num_layers):
-        layers.append(int(args.size*args.dec_rate**(i)))
-    layers.append(args.l_dim)
-    size_val=args.size
-    model_dec_type="fixed"
-    # log_file="perf_results/nsl_train_log_fixed.txt"
-        
-model_config={
-    'd_dim':x_train.shape[1],
-    'layers':layers
-}
-
-model_desc='AE-{}_{}_{}'.format(args.dec_rate,args.l_dim,args.num_layers)
-model=AE(model_config).to(device)
-wandb.watch(model)
-
-#Xavier Init Weights
 def init_weights(m):
     if type(m) == torch.nn.Linear:
         torch.nn.init.xavier_uniform(m.weight)
         m.bias.data.fill_(0.01)
-model.apply(init_weights)
+     
+#Get Model Predictions
+def get_model_preds(model,loader):
+    model.eval()
+    with torch.no_grad():
+        pred=[]
+        loss=[]
+        for batch in loader:
+            target = batch.type(torch.float32)
 
-#Check Model
-from torchsummary import summary
-print(summary(model,(args.batch_size,x_train.shape[1])))
-# exit()
+            outputs = model(target)
+            batch_error = model.compute_loss(outputs, target)
 
+            pred.append(outputs['output'].cpu().detach().numpy())
+            loss.append(batch_error.item())
+
+        pred=np.concatenate(pred)
+    return pred,loss
+
+def get_threshold(dist,y,avg_type='binary'):
+    dist_safe=dist[y==0]
+    mean=np.mean(dist_safe)
+    std=np.std(dist_safe)
+    
+    best_score=0
+    best_th=0
+    best_z=0
+    
+    #Z Score Search Range
+    for z in range(1,801):
+        cand=-4+0.01*z
+        # print("\nCand",cand)
+        score,th=check_th(dist,y,mean,std,cand,avg_type='binary')
+        if best_score<score:
+            best_score=score
+            best_th=th
+            best_z=cand
+            
+    print("Best z {:.3f} th {:.10f} with score {:.5f}".format(best_z,best_th,best_score))
+    return mean,std,best_z
+
+def check_th(dist,y,mean,stddev,z,avg_type='binary'):
+    th=mean+stddev*z
+    
+    y_pred=np.zeros_like(y)
+    y_pred[dist>th]=1
+    # precision, recall, f_score, support = precision_recall_fscore_support(y, y_pred, pos_label=1, average=avg_type)
+    # score=f_score
+    score=mcc(y,y_pred)
+    return score,th
+
+best_val_mcc=0
+best_weights=None
+best_scaler=None
+best_num_desc=None
+
+best_std=0
+best_mean=0
+best_z=0
+
+
+log_name="perf_results/nsl_train_perf_fixed.txt"
+
+if not os.path.isfile(log_name):
+     with open(log_name, "a") as myfile:
+         myfile.write("size,num_layers,l_dim,epoch,batch,dropout,bn,dist,"+"auc,z,acc,p,r,f,"+"fpr,mcc,"+"label,seed,dec_rate,best_epoch\n")
+         
+model_desc='AE{}-{}_{}_{}'.format(args.size,args.dec_rate,args.l_dim,args.num_layers)
+
+#Preprocess
+train_df,y_train,y_train_types,scaler,num_desc=preprocess(train,serviceData,flagData)  
+x_train=train_df.values
+x_train,y_train=filter_label(x_train,y_train,select_label=SAFE)
+print("Filter Train: Normal:{}, Atk:{}".format(x_train[y_train==0].shape[0],x_train[y_train==1].shape[0]))
 #Train
-optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-# optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
-
-model.zero_grad()
-model.train(True)
-
-#Load to Cuda
 x_train = torch.from_numpy(x_train).float().to(device)
 data_sampler = RandomSampler(x_train)
 data_loader = DataLoader(x_train, sampler=data_sampler, batch_size=args.batch_size)
 
+val_df,y_val,y_val_types,_,_=preprocess(val,serviceData,flagData,is_train=False,scaler=scaler, num_desc=num_desc)
+x_val=val_df.values
 x_val_cuda = torch.from_numpy(x_val).float().to(device)
-eval_sampler = SequentialSampler(x_val_cuda)
-eval_dataloader = DataLoader(x_val_cuda, sampler=eval_sampler, batch_size=args.batch_size)
+val_sampler = SequentialSampler(x_val_cuda)
+val_dataloader = DataLoader(x_val_cuda, sampler=val_sampler, batch_size=args.batch_size)
 
-#History
+
 train_hist={
-    'loss':[]
+'loss':[]
 }
 val_hist={
     'loss':[],
@@ -198,59 +200,50 @@ model_best={
     'epoch_cos':0,
 }
 
-
-#Evaluate before start
-def check_th(val_dist,y_val,z,avg_type='binary'):
-    mean_l2=np.mean(val_dist)
-    var_l2=np.var(val_dist)
-    stddev_l2=np.std(val_dist)
-
-    #Get value with only safe
-    val_dist_safe=val_dist[y_val==0]
-    mean_l2=np.mean(val_dist_safe)
-    var_l2=np.var(val_dist_safe)
-    stddev_l2=np.std(val_dist_safe)
-
-    # l2_dist_std=ss.zscore(data)
-    th=mean_l2+stddev_l2*z
-    y_pred=np.zeros_like(y_val)
-    # test_l2_std=ss.zscore(test_l2)
-    y_pred[val_dist>th]=1
-    precision, recall, f_score, support = precision_recall_fscore_support(y_val, y_pred, pos_label=1, average=avg_type)
-    return f_score,th
-
-
-model.eval()
-with torch.no_grad():
-    pred_val=[]
-    val_loss=[]
-    for batch in eval_dataloader:
-        target = batch.type(torch.float32)
-
-        outputs = model(target)
-        batch_error = model.compute_loss(outputs, target)
-
-        pred_val.append(outputs['output'].cpu().detach().numpy())
-        val_loss.append(batch_error.item())
-
-    pred_val=np.concatenate(pred_val)
-
-val_dist_l2=np.mean(np.square(x_val-pred_val),axis=1)
-val_dist_cos=[distance.cosine(x_val[i],pred_val[i]) for i in range(x_val.shape[0])]
-
-auc_l2,_,_=make_roc(val_dist_l2,y_val,ans_label=ATK)
-auc_cos,_,_=make_roc(val_dist_cos,y_val,ans_label=ATK)
-val_hist['auc_l2'].append(auc_l2)
-val_hist['auc_cos'].append(auc_cos)
-# val_hist['f1'].append(best_f1)
-# wandb.log({"{}_{} F1".format(model_desc,args.batch_size):best_f1,"{}_{} AUC".format(model_desc,args.batch_size):auc_l2})
-
-
 batch_iter=0
-stop_train=False
+if args.dec:
+    layers=[]
+    for i in range(0,args.num_layers):
+        layers.append(int(x_train.shape[1]*args.dec_rate**(i+1)))
+    layers.append(args.l_dim) 
+    
+    #Set Val for logs
+    # size_val=args.dec_rate
+    size_val="In"
+    model_dec_type="dec"
+    
+else:
+    #Decrease from Biggest - default 0.5
+    layers=[]
+    for i in range(0,args.num_layers):
+        layers.append(int(args.size*args.dec_rate**(i)))
+    layers.append(args.l_dim)
+    size_val=args.size
+    model_dec_type="fixed"
+    # log_file="perf_results/nsl_train_log_fixed.txt"
+        
+# model_config={
+#     'd_dim':x_train.shape[1],
+#     'layers':layers
+# }
+
+model_config={
+    'd_dim':114,
+    'layers':layers
+} 
+model=AE(model_config).to(device)
+wandb.watch(model)
+
+#Xavier Init Weights
+model.apply(init_weights)
+optimizer = torch.optim.Adam(model.parameters(), lr=args.lr ,weight_decay=1e-5)
+
+model.zero_grad()
+model.train(True)
+
 for epoch in range(args.epoch):
     epoch_loss = []
-    print("\nTraining Epoch",epoch+1)
+    print(f"\nTraining Epoch {epoch+1} Ldim {args.l_dim} Seed {args.seed}")
     model.train()
     for step, batch in enumerate(data_loader):
         batch_iter+=1
@@ -265,119 +258,160 @@ for epoch in range(args.epoch):
 
         epoch_loss.append(loss.item())
 
-        # if batch_iter%100==0:
-    # print("Batch {}: Train: {:.5f}".format(batch_iter, sum(epoch_loss)/len(epoch_loss)))
     train_loss=loss.item()
-    # print("Epoch {}: Train: {:.5f}".format(epoch+1,train_loss))
-    #Validation loss
-    # if (epoch+1) %5==0:
-    model.eval()
-    with torch.no_grad():
-        pred_val=[]
-        val_loss=[]
-        for batch in eval_dataloader:
-            target = batch.type(torch.float32)
-
-            outputs = model(target)
-            batch_error = model.compute_loss(outputs, target)
-
-            pred_val.append(outputs['output'].cpu().detach().numpy())
-            val_loss.append(batch_error.item())
-
-        pred_val=np.concatenate(pred_val)
-
-    val_dist_l2=np.mean(np.square(x_val-pred_val),axis=1)
-    val_dist_cos=[distance.cosine(x_val[i],pred_val[i]) for i in range(x_val.shape[0])]
-
+    pred_val,val_loss=get_model_preds(model,val_dataloader)
+    
     print("iter {}: Train: {:.5f}, Val: {:.5f}".format(batch_iter, train_loss,sum(val_loss)/len(val_loss)))
 
-    print("\nL2")
-    # print('Average Precision',average_precision_score(y_val, val_dist_l2, pos_label=ATK))
-    auc_l2,_,_=make_roc(val_dist_l2,y_val,ans_label=ATK)
-    auc_cos,_,_=make_roc(val_dist_cos,y_val,ans_label=ATK)
-    print("AUC L2 {:.5f} Cos {:.5f}".format(auc_l2,auc_cos))
     #Save Hist
     train_hist['loss'].append(sum(epoch_loss)/len(epoch_loss))
-
     val_hist['loss'].append(sum(val_loss)/len(val_loss))
-    val_hist['auc_l2'].append(auc_l2)
-    val_hist['auc_cos'].append(auc_cos)
+    
     # val_hist['f1'].append(best_f1)
     # wandb.log({"{}_{} F1".format(model_desc,args.batch_size):best_f1,"{}_{} AUC".format(model_desc,args.batch_size):auc_l2,"{}_{} Val Loss".format(model_desc,args.batch_size):sum(val_loss)/len(val_loss),"{}_{} Train Loss".format(model_desc,args.batch_size):train_loss})
     wandb.log({"{}_{} Val Loss".format(model_desc,args.batch_size):sum(val_loss)/len(val_loss),"{}_{} Train Loss".format(model_desc,args.batch_size):train_loss})
-    wandb.log({"{}_{} AUC L2".format(model_desc,args.batch_size):auc_l2})
-    wandb.log({"{}_{} AUC Cos".format(model_desc,args.batch_size):auc_cos})
-    
-    # val_loss=sum(val_loss)/len(val_loss)
-    val_loss=auc_l2
 
-    prev_loss=val_loss
+
+    print("\nL2")
+    # print('Average Precision',average_precision_score(y_val, val_dist_l2, pos_label=ATK))
+    val_dist_l2=np.mean(np.square(x_val-pred_val),axis=1)
+    auc_l2,_,_=make_roc(val_dist_l2,y_val,ans_label=ATK)
+    print("AUC L2 {:.5f}".format(auc_l2))
+    val_hist['auc_l2'].append(auc_l2)
+    wandb.log({"{}_{} AUC L2".format(model_desc,args.batch_size):auc_l2})
+    
     #Save Model
     if auc_l2>model_best['auc_l2']:
         model_best['state_l2']=copy.deepcopy(model.state_dict())
         # model_best['epoch']=batch_iter
         model_best['epoch_l2']=epoch+1
         model_best['auc_l2']=auc_l2
+            
+
+model.load_state_dict(model_best['state_l2'])
+pred_val,val_loss=get_model_preds(model,val_dataloader)
+val_dist=np.mean(np.square(x_val-pred_val),axis=1)
+#Train Complete
+
+#Get Threshold
+comb_dist_mean,comb_dist_std,comb_best_z=get_threshold(val_dist,y_val,avg_type='binary')
+
+
+val_dist_norm=(val_dist-comb_dist_mean)/comb_dist_std
+
+y_pred=np.zeros_like(y_val)
+y_pred[val_dist_norm>comb_best_z]=1
+
+test_auc,_,_=make_roc(val_dist,y_val,ans_label=ATK)
+prf(y_val,y_pred,ans_label=1,avg_type='binary')
+accuracy = accuracy_score(y_val,y_pred)
+precision, recall, f_score, support = precision_recall_fscore_support(y_val, y_pred, pos_label=1, average='binary')
+f_0_5=fbeta_score(y_val, y_pred, pos_label=1, average='binary', beta=0.5)
+f_2=fbeta_score(y_val, y_pred,pos_label=1, average='binary', beta=2)
+print("F1 {:.5f} F0.5 {:.5f} F2 {:.5f}\n".format(f_score,f_0_5,f_2))
+
+#Added (210201) - FPR, MCC
+test_fpr=fpr(y_val,y_pred)
+test_mcc=mcc(y_val,y_pred)
+print("FPR {:.5f}, MCC {:.5f}".format(test_fpr,test_mcc))
+
+#Best MCC Model
+best_val_mcc=copy.deepcopy(test_mcc)
+
+
+best_weights=copy.deepcopy(model_best['state_l2'])
+best_scaler=copy.deepcopy(scaler)
+best_num_desc=copy.deepcopy(num_desc)
+best_mean=copy.deepcopy(comb_dist_mean)
+best_std=copy.deepcopy(comb_dist_std)
+best_z=copy.deepcopy(comb_best_z)
     
-    if auc_cos>model_best['auc_cos']:
-        model_best['state_cos']=copy.deepcopy(model.state_dict())
-        model_best['auc_cos']=auc_cos
-        model_best['epoch_cos']=epoch+1
-                
-
-
-print("\nTrain Complete")
-
-log_file=f"perf_results/nsl_train_log_{model_dec_type}.txt"
-if not os.path.isfile(log_file):
-     with open(log_file, "a") as myfile:
-         myfile.write("size,num_layers,l_dim,epoch,batch,dropout,bn,dist,best_auc,best_ep,seed,dec_rate\n")
-with open(log_file, "a") as myfile:
+with open(log_name, "a") as myfile:
     #L2
     myfile.write(f"{size_val},{args.num_layers},{args.l_dim},")
     myfile.write(f"{args.epoch},{args.batch_size},")
     myfile.write(f"{args.do},{args.bn},")
-    myfile.write("l2,{:.5f},{},".format(model_best['auc_l2'],model_best['epoch_l2']))
-    myfile.write(f"{args.seed},{args.dec_rate}\n")
+    #PERF
+    myfile.write("l2,{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},".format(test_auc,comb_best_z,accuracy,precision,recall,f_score))
     
-    myfile.write(f"{args.size},{args.num_layers},{args.l_dim},")
+    
+    #Added (210201) - FPR, MCC
+    myfile.write("{:.5f},{:.5f},".format(test_fpr,test_mcc))
+    ##
+
+    myfile.write(f"total,{args.seed},{args.dec_rate},{model_best['epoch_l2']}\n")
+    
+
+    joblib.dump(best_scaler, "./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.scaler".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed)) 
+    pickle.dump(best_num_desc,open("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.numdesc".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed), 'wb'))
+    # best_num_desc.to_csv(,header=None,index=None)
+    with open("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.pt".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed), "wb") as f:
+        torch.save(
+            {
+                "state_l2": best_weights,
+                # "state_cos": model_best['state_cos'],
+            },
+            f,
+        )
+    
+print("\nTrain Complete")
+
+best_num_desc=pickle.load(open("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.numdesc".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed), 'rb'))
+best_scaler=joblib.load("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.scaler".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed))
+with open("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.th".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed),'w') as f:
+    f.write(f'{str(best_mean)}\n{str(best_std)}\n{str(best_z)}')
+  
+
+test=pd.read_csv(data_dir+'/test.csv',header=None)
+test_df,y_test,y_test_types,_,_=preprocess(test,serviceData,flagData,is_train=False,scaler=best_scaler, num_desc=best_num_desc)
+x_test=test_df.values
+x_test_cuda = torch.from_numpy(x_test).float().to(device)
+eval_sampler = SequentialSampler(x_test_cuda)
+eval_dataloader = DataLoader(x_test_cuda, sampler=eval_sampler, batch_size=args.batch_size)
+pred_test,_=get_model_preds(model,eval_dataloader)
+
+test_dist=np.mean(np.square(x_test-pred_test),axis=1)
+test_dist_norm=(test_dist-best_mean)/best_std
+
+y_pred=np.zeros_like(y_test)
+y_pred[test_dist_norm>best_z]=1
+
+test_auc,_,_=make_roc(test_dist,y_test,ans_label=ATK)
+prf(y_test,y_pred,ans_label=1,avg_type='binary')
+accuracy = accuracy_score(y_test,y_pred)
+precision, recall, f_score, support = precision_recall_fscore_support(y_test, y_pred, pos_label=1, average='binary')
+f_0_5=fbeta_score(y_test, y_pred, pos_label=1, average='binary', beta=0.5)
+f_2=fbeta_score(y_test, y_pred,pos_label=1, average='binary', beta=2)
+print("F1 {:.5f} F0.5 {:.5f} F2 {:.5f}\n".format(f_score,f_0_5,f_2))
+
+#Added (210201) - FPR, MCC
+test_fpr=fpr(y_test,y_pred)
+test_mcc=mcc(y_test,y_pred)
+print("FPR {:.5f}, MCC {:.5f}".format(test_fpr,test_mcc))
+
+if args.dist_cos:
+    log_name=f"perf_results/nsl_{args.size}_{args.num_layers}_cos.csv"
+else:
+    log_name=f"perf_results/nsl_{args.size}_{args.num_layers}.csv"
+
+if not os.path.isfile(log_name):
+     with open(log_name, "a") as myfile:
+         myfile.write("size,num_layers,l_dim,epoch,batch,dropout,bn,dist,"+"auc,z,acc,p,r,f,"+"fpr,mcc,"+"label,seed,dec_rate\n")
+         
+with open(log_name, "a") as myfile:
+    #L2
+    myfile.write(f"{size_val},{args.num_layers},{args.l_dim},")
     myfile.write(f"{args.epoch},{args.batch_size},")
     myfile.write(f"{args.do},{args.bn},")
-    myfile.write("cos,{:.5f},{},".format(model_best['auc_cos'],model_best['epoch_cos']))
-    myfile.write(f"{args.seed},{args.dec_rate}\n")
-    
-    # myfile.write(f"{args.do},{args.bn},")
-    # myfile.write("Val L2 Best {:.5f} at {}\n".format(model_best['auc_l2'],model_best['epoch_l2']))
-    # myfile.write("Val Cos Best {:.5f} at {}\n".format(model_best['auc_cos'],model_best['epoch_cos']))
-# exit()
-#Make Folder
+    #PERF
+    # myfile.write("l2,{:.5f},{},".format(model_best['auc_l2'],model_best['epoch_l2']))
+    if args.dist_cos:
+        myfile.write("cos,{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},".format(test_auc,comb_best_z,accuracy,precision,recall,f_score))
+    else:
+        myfile.write("l2,{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},".format(test_auc,comb_best_z,accuracy,precision,recall,f_score))
+    #Added (210201) - FPR, MCC
+    myfile.write("{:.5f},{:.5f},".format(test_fpr,test_mcc))
+    ##
+    myfile.write(f"total,{args.seed},{args.dec_rate}\n")
 
-if not os.path.exists('weights_{}_{}_{}'.format(args.num_layers,model_dec_type,args.dec_rate)):
-    os.makedirs('weights_{}_{}_{}'.format(args.num_layers,model_dec_type,args.dec_rate))
-if not os.path.exists('loss_plot'):
-    os.makedirs('loss_plot')
-if not os.path.exists('auc_plot'):
-    os.makedirs('auc_plot') 
-# if not os.path.exists('f1_plot'):
-#     os.makedirs('f1_plot') 
-
-with open("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.pt".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed), "wb") as f:
-    torch.save(
-        {
-            "state_l2": model_best['state_l2'],
-            "state_cos": model_best['state_cos'],
-        },
-        f,
-    )
-# exit()
-#Loss Plot
-# loss_fig=plot_losses(train_hist['loss'],val_hist['loss'],"Loss History")
-# loss_fig.savefig('./loss_plot/nsl_{}_{}_{}_{}_{}_{}_{}.png'.format(model_dec_type,args.num_layers,size_val,args.l_dim,args.epoch,args.batch_size,args.seed))
-
-# # #AUC Plot
-# auc_fig=plot_auc(val_hist['auc_l2'])
-# auc_fig.savefig('./auc_plot/nsl_{}_l2_{}_{}_{}_{}_{}.png'.format(model_dec_type,args.num_layers,size_val,args.l_dim,args.epoch,args.batch_size,args.seed))
-
-# auc_fig=plot_auc(val_hist['auc_cos'])
-# auc_fig.savefig('./auc_plot/nsl_{}_cos_{}_{}_{}_{}_{}.png'.format(model_dec_type,args.num_layers,size_val,args.l_dim,args.epoch,args.batch_size,args.seed))
-# exit()
+exit()
