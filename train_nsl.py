@@ -9,9 +9,7 @@ from model.ae import AE
 
 from utils.data_utils import *
 from utils.perf_utils import *
-# from utils.reduc_utils import *
 from utils.plot_utils import *
-from utils.dataset_utils import *
 
 #Preprocess Script
 from data.preprocess_nsl import *
@@ -32,69 +30,49 @@ import pickle
 ATK=1
 SAFE=0
 
-# Argument Setting
-parser = argparse.ArgumentParser()
+def load_data():
+    data_dir='data/nsl_kdd/split'
+    train=pd.read_csv(data_dir+'/train.csv',header=None)
+    val=pd.read_csv(data_dir+'/val.csv',header=None)
 
-parser.add_argument("--seed", default=42, type=int,
-                    help="random seed for reproductability")
+    service = open(data_dir+'/service.txt', 'r')
+    serviceData = service.read().split('\n')
+    service.close()
 
-#Model Config
-parser.add_argument("--l_dim", default=10, type=int,
-                    help="Latent Dim")
-parser.add_argument("--num_layers", default=2, type=int,
-                    help="number of layers")
-parser.add_argument("--size", default=64, type=int,
-                    help="Biggest Hid Size")
-#Regularization
-parser.add_argument("--do", default=0, type=float,
-                    help="dropout rate")
-parser.add_argument("--bn", default=0, type=int,
-                    help="batch norm: 1 to use")
+    flag = open(data_dir+'/flag.txt', 'r')
+    flagData = flag.read().split('\n')
+    flag.close()
 
-#Training Params
-parser.add_argument("--epoch", default=10, type=int,
-                    help="training epochs")
-parser.add_argument("--batch_size", default=8192, type=int,
-                    help="batch size for train and test")
-parser.add_argument("--lr", default=1e-4, type=float,
-                    help="learning rate")
+    #Preprocess
+    train_df,y_train,y_train_types,scaler,num_desc=preprocess(train,serviceData,flagData)  
+    x_train=train_df.values
+    x_train,y_train=filter_label(x_train,y_train,select_label=SAFE)
+    print("Filter Train: Normal:{}, Atk:{}".format(x_train[y_train==0].shape[0],x_train[y_train==1].shape[0]))
 
+    val_df,y_val,y_val_types,_,_=preprocess(val,serviceData,flagData,is_train=False,scaler=scaler, num_desc=num_desc)
+    x_val=val_df.values
+    return x_train,y_train,x_val,y_val
 
-parser.add_argument('--dec', action='store_true',
-                    help="Hidden layer sizes decreases From Input")
-parser.add_argument('--dec_rate',default=0.5,type=float,
-                    help="Decrease From Input Rate")
-
-parser.add_argument('--dist_cos', action='store_true',
-                    help="Use Cosine as Dist")
-
-# parser.add_argument("--data", default="nsl", type=str,
-#                         help="Dataset")
-args = parser.parse_args()
-wandb.init(project="svcc-nslkdd")
-# Fix seed
-set_seed(args.seed)
-device = torch.device('cuda:0')
-
-##### Load Data #####
-data_dir='data/nsl_kdd/split'
-train=pd.read_csv(data_dir+'/train.csv',header=None)
-val=pd.read_csv(data_dir+'/val.csv',header=None)
-
-service = open(data_dir+'/service.txt', 'r')
-serviceData = service.read().split('\n')
-service.close()
-
-flag = open(data_dir+'/flag.txt', 'r')
-flagData = flag.read().split('\n')
-flag.close()
-
-
+#Initialize Model
 def init_weights(m):
     if type(m) == torch.nn.Linear:
         torch.nn.init.xavier_uniform(m.weight)
         m.bias.data.fill_(0.01)
      
+def get_model(args,data_dim):
+    layers=[]
+    for i in range(0,args.num_layers):
+        #Halved for each succeeding layer size
+        layers.append(int(args.max_hid_size*0.5**(i)))
+    layers.append(args.l_dim)
+    
+    model_config={
+        'd_dim':data_dim,
+        'layers':layers
+    } 
+    model=AE(model_config)
+    return model
+    
 #Get Model Predictions
 def get_model_preds(model,loader):
     model.eval()
@@ -113,305 +91,282 @@ def get_model_preds(model,loader):
         pred=np.concatenate(pred)
     return pred,loss
 
-def get_threshold(dist,y,avg_type='binary'):
+def get_threshold(dist,y):
+    #Calculate Best Threshold
+    
+    #Standardize Distance
     dist_safe=dist[y==0]
     mean=np.mean(dist_safe)
     std=np.std(dist_safe)
     
+    dist_standardized=(dist-mean)/std
+    
     best_score=0
     best_th=0
-    best_z=0
     
     #Z Score Search Range
     for z in range(1,801):
-        cand=-4+0.01*z
-        # print("\nCand",cand)
-        score,th=check_th(dist,y,mean,std,cand,avg_type='binary')
+        th_cand=-4+0.01*z
+
+        #Prediction
+        y_pred=np.zeros_like(y)
+        y_pred[dist_standardized>th_cand]=1
+        
+        #Score: MCC
+        score=mcc(y,y_pred)
+        
         if best_score<score:
             best_score=score
-            best_th=th
-            best_z=cand
+            best_th=th_cand
             
-    print("Best z {:.3f} th {:.10f} with score {:.5f}".format(best_z,best_th,best_score))
-    return mean,std,best_z
+    print("Best Z-threshold {:.3f} with score {:.5f}".format(best_th,best_score))
+    return mean,std,best_th
 
-def check_th(dist,y,mean,stddev,z,avg_type='binary'):
-    th=mean+stddev*z
+def train(args,device,weight_dir):
+    #Load Data
+    x_train,y_train,x_val,y_val=load_data()
     
-    y_pred=np.zeros_like(y)
-    y_pred[dist>th]=1
-    # precision, recall, f_score, support = precision_recall_fscore_support(y, y_pred, pos_label=1, average=avg_type)
-    # score=f_score
-    score=mcc(y,y_pred)
-    return score,th
+    #Get Model
+    model=get_model(args,x_train.shape[1])
+    
 
-best_val_mcc=0
-best_weights=None
-best_scaler=None
-best_num_desc=None
+    best_val_mcc=0
+    best_weights=None
 
-best_std=0
-best_mean=0
-best_z=0
+    #Log Validation Performance
+    train_log_name="train_log/nsl.txt"
 
-
-log_name="perf_results/nsl_train_perf_fixed.txt"
-
-if not os.path.isfile(log_name):
-     with open(log_name, "a") as myfile:
-         myfile.write("size,num_layers,l_dim,epoch,batch,dropout,bn,dist,"+"auc,z,acc,p,r,f,"+"fpr,mcc,"+"label,seed,dec_rate,best_epoch\n")
+    if not os.path.isfile(train_log_name):
+        with open(train_log_name, "a") as myfile:
+            #To Record
+            myfile.write("max_hid_size,num_layers,l_dim,epoch,batch_size,z_th,auc,acc,p,r,f,fpr,mcc,seed,best_epoch\n")
          
-model_desc='AE{}-{}_{}_{}'.format(args.size,args.dec_rate,args.l_dim,args.num_layers)
+    model_desc='NSL {}-{}_{}'.format(args.num_layers,args.max_hid_size,args.l_dim)
 
-#Preprocess
-train_df,y_train,y_train_types,scaler,num_desc=preprocess(train,serviceData,flagData)  
-x_train=train_df.values
-x_train,y_train=filter_label(x_train,y_train,select_label=SAFE)
-print("Filter Train: Normal:{}, Atk:{}".format(x_train[y_train==0].shape[0],x_train[y_train==1].shape[0]))
-#Train
-x_train = torch.from_numpy(x_train).float().to(device)
-data_sampler = RandomSampler(x_train)
-data_loader = DataLoader(x_train, sampler=data_sampler, batch_size=args.batch_size)
+    #Dataloader
+    x_train = torch.from_numpy(x_train).float().to(device)
+    data_sampler = RandomSampler(x_train)
+    data_loader = DataLoader(x_train, sampler=data_sampler, batch_size=args.batch_size)
 
-val_df,y_val,y_val_types,_,_=preprocess(val,serviceData,flagData,is_train=False,scaler=scaler, num_desc=num_desc)
-x_val=val_df.values
-x_val_cuda = torch.from_numpy(x_val).float().to(device)
-val_sampler = SequentialSampler(x_val_cuda)
-val_dataloader = DataLoader(x_val_cuda, sampler=val_sampler, batch_size=args.batch_size)
+    x_val_cuda = torch.from_numpy(x_val).float().to(device)
+    val_sampler = SequentialSampler(x_val_cuda)
+    val_dataloader = DataLoader(x_val_cuda, sampler=val_sampler)
 
+    loss_hist={
+        'train':[],
+        'val':[],
+        'val_auc':[]
+    }
+    best_perf={
+        'best_auc':0,
+        'model_weights':None,
+        'best_epoch':0
+    }
 
-train_hist={
-'loss':[]
-}
-val_hist={
-    'loss':[],
-    'auc_l2':[],
-    'auc_cos':[],
-    'f1':[]
-}
-model_best={
-    'auc_l2':0,
-    'auc_cos':0,
+    #Load Model
+    model=get_model(args,x_train.shape[1])
+    model=model.to(device)
+    wandb.watch(model)
 
-    'state_l2':None,
-    'state_cos':None,
+    #Xavier Init Weights
+    model.apply(init_weights)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr ,weight_decay=1e-5)
 
-    'epoch_l2':0,
-    'epoch_cos':0,
-}
+    model.zero_grad()
+    model.train(True)
 
-batch_iter=0
-if args.dec:
-    layers=[]
-    for i in range(0,args.num_layers):
-        layers.append(int(x_train.shape[1]*args.dec_rate**(i+1)))
-    layers.append(args.l_dim) 
-    
-    #Set Val for logs
-    # size_val=args.dec_rate
-    size_val="In"
-    model_dec_type="dec"
-    
-else:
-    #Decrease from Biggest - default 0.5
-    layers=[]
-    for i in range(0,args.num_layers):
-        layers.append(int(args.size*args.dec_rate**(i)))
-    layers.append(args.l_dim)
-    size_val=args.size
-    model_dec_type="fixed"
-    # log_file="perf_results/nsl_train_log_fixed.txt"
+    #Train Model
+    for epoch in range(args.epoch):
+        epoch_loss = []
+        print(f"\nTraining Epoch {epoch+1} Ldim {args.l_dim} Seed {args.seed}")
+        model.train()
+        for step, batch in enumerate(data_loader):
+            target = batch.type(torch.float32)
+
+            outputs = model(target)
+            loss = model.compute_loss(outputs, target)
+
+            loss.backward()
+            optimizer.step()
+            model.zero_grad()
+
+            epoch_loss.append(loss.item())
+
+        pred_val,val_loss=get_model_preds(model,val_dataloader)
+
+        #Save Hist
+        train_loss_val=sum(epoch_loss)/len(epoch_loss)
+        val_loss_val=sum(val_loss)/len(val_loss)
+        loss_hist['train'].append(train_loss_val)
+        loss_hist['val'].append(val_loss_val)
         
-# model_config={
-#     'd_dim':x_train.shape[1],
-#     'layers':layers
-# }
+        print("Epoch {}: Train: {:.5f}, Val: {:.5f}".format(epoch+1, train_loss_val,val_loss_val))
+        wandb.log({f"{model_desc} Train Loss":train_loss_val,f"{model_desc} Val Loss":val_loss_val})
 
-model_config={
-    'd_dim':114,
-    'layers':layers
-} 
-model=AE(model_config).to(device)
-wandb.watch(model)
-
-#Xavier Init Weights
-model.apply(init_weights)
-optimizer = torch.optim.Adam(model.parameters(), lr=args.lr ,weight_decay=1e-5)
-
-model.zero_grad()
-model.train(True)
-
-for epoch in range(args.epoch):
-    epoch_loss = []
-    print(f"\nTraining Epoch {epoch+1} Ldim {args.l_dim} Seed {args.seed}")
-    model.train()
-    for step, batch in enumerate(data_loader):
-        batch_iter+=1
-        target = batch.type(torch.float32)
-
-        outputs = model(target)
-        loss = model.compute_loss(outputs, target)
-
-        loss.backward()
-        optimizer.step()
-        model.zero_grad()
-
-        epoch_loss.append(loss.item())
-
-    train_loss=loss.item()
+        #Calculate AUC
+        val_dist_l2=np.mean(np.square(x_val-pred_val),axis=1)
+        auc_l2,_,_=make_roc(val_dist_l2,y_val,ans_label=ATK)
+        print("AUC {:.5f}".format(auc_l2))
+        loss_hist['val_auc'].append(auc_l2)
+        wandb.log({"{} AUC L2".format(model_desc):auc_l2})
+        
+        #Save Model if Better
+        if auc_l2>best_perf['best_auc']:
+            best_perf['model_weights']=copy.deepcopy(model.state_dict())
+            best_perf['best_epoch']=epoch+1
+            best_perf['best_auc']=auc_l2
+    
+    print("Model Train Complete")
+    
+    #Get Threshold
+    model.load_state_dict(best_perf['model_weights'])
     pred_val,val_loss=get_model_preds(model,val_dataloader)
+    val_dist=np.mean(np.square(x_val-pred_val),axis=1)
+
+    val_safe_mean,val_safe_stddev,val_best_z_th=get_threshold(val_dist,y_val)
     
-    print("iter {}: Train: {:.5f}, Val: {:.5f}".format(batch_iter, train_loss,sum(val_loss)/len(val_loss)))
-
-    #Save Hist
-    train_hist['loss'].append(sum(epoch_loss)/len(epoch_loss))
-    val_hist['loss'].append(sum(val_loss)/len(val_loss))
+    val_dist_standardized=(val_dist-val_safe_mean)/val_safe_stddev
     
-    # val_hist['f1'].append(best_f1)
-    # wandb.log({"{}_{} F1".format(model_desc,args.batch_size):best_f1,"{}_{} AUC".format(model_desc,args.batch_size):auc_l2,"{}_{} Val Loss".format(model_desc,args.batch_size):sum(val_loss)/len(val_loss),"{}_{} Train Loss".format(model_desc,args.batch_size):train_loss})
-    wandb.log({"{}_{} Val Loss".format(model_desc,args.batch_size):sum(val_loss)/len(val_loss),"{}_{} Train Loss".format(model_desc,args.batch_size):train_loss})
-
-
-    print("\nL2")
-    # print('Average Precision',average_precision_score(y_val, val_dist_l2, pos_label=ATK))
-    val_dist_l2=np.mean(np.square(x_val-pred_val),axis=1)
-    auc_l2,_,_=make_roc(val_dist_l2,y_val,ans_label=ATK)
-    print("AUC L2 {:.5f}".format(auc_l2))
-    val_hist['auc_l2'].append(auc_l2)
-    wandb.log({"{}_{} AUC L2".format(model_desc,args.batch_size):auc_l2})
+    y_pred=np.zeros_like(y_val)
+    y_pred[val_dist_standardized>val_best_z_th]=1
     
-    #Save Model
-    if auc_l2>model_best['auc_l2']:
-        model_best['state_l2']=copy.deepcopy(model.state_dict())
-        # model_best['epoch']=batch_iter
-        model_best['epoch_l2']=epoch+1
-        model_best['auc_l2']=auc_l2
-            
+    val_auc,_,_=make_roc(val_dist,y_val,ans_label=ATK)
+    accuracy = accuracy_score(y_val,y_pred)
+    precision, recall, f_score, _ = precision_recall_fscore_support(y_val, y_pred, pos_label=ATK, average='binary')
+    # f_0_5=fbeta_score(y_val, y_pred, pos_label=1, average='binary', beta=0.5)
+    # f_2=fbeta_score(y_val, y_pred,pos_label=1, average='binary', beta=2)
+    # print("F1 {:.5f} F0.5 {:.5f} F2 {:.5f}\n".format(f_score,f_0_5,f_2))
 
-model.load_state_dict(model_best['state_l2'])
-pred_val,val_loss=get_model_preds(model,val_dataloader)
-val_dist=np.mean(np.square(x_val-pred_val),axis=1)
-#Train Complete
+    test_fpr=fpr(y_val,y_pred)
+    test_mcc=mcc(y_val,y_pred)
+    print("FPR {:.5f}, MCC {:.5f}".format(test_fpr,test_mcc))
 
-#Get Threshold
-comb_dist_mean,comb_dist_std,comb_best_z=get_threshold(val_dist,y_val,avg_type='binary')
-
-
-val_dist_norm=(val_dist-comb_dist_mean)/comb_dist_std
-
-y_pred=np.zeros_like(y_val)
-y_pred[val_dist_norm>comb_best_z]=1
-
-test_auc,_,_=make_roc(val_dist,y_val,ans_label=ATK)
-prf(y_val,y_pred,ans_label=1,avg_type='binary')
-accuracy = accuracy_score(y_val,y_pred)
-precision, recall, f_score, support = precision_recall_fscore_support(y_val, y_pred, pos_label=1, average='binary')
-f_0_5=fbeta_score(y_val, y_pred, pos_label=1, average='binary', beta=0.5)
-f_2=fbeta_score(y_val, y_pred,pos_label=1, average='binary', beta=2)
-print("F1 {:.5f} F0.5 {:.5f} F2 {:.5f}\n".format(f_score,f_0_5,f_2))
-
-#Added (210201) - FPR, MCC
-test_fpr=fpr(y_val,y_pred)
-test_mcc=mcc(y_val,y_pred)
-print("FPR {:.5f}, MCC {:.5f}".format(test_fpr,test_mcc))
-
-#Best MCC Model
-best_val_mcc=copy.deepcopy(test_mcc)
-
-
-best_weights=copy.deepcopy(model_best['state_l2'])
-best_scaler=copy.deepcopy(scaler)
-best_num_desc=copy.deepcopy(num_desc)
-best_mean=copy.deepcopy(comb_dist_mean)
-best_std=copy.deepcopy(comb_dist_std)
-best_z=copy.deepcopy(comb_best_z)
+    #Log Results
+    with open(train_log_name, "a") as myfile:
+        #L2
+        myfile.write(f"{args.max_hid_size},{args.num_layers},{args.l_dim},")
+        myfile.write(f"{args.epoch},{args.batch_size},")
+        #PERF
+        myfile.write("{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},".format(val_best_z_th,val_auc,accuracy,precision,recall,f_score))
+        myfile.write("{:.5f},{:.5f},".format(test_fpr,test_mcc))
+        myfile.write(f"{args.seed},{best_perf['best_epoch']}\n")
     
-with open(log_name, "a") as myfile:
-    #L2
-    myfile.write(f"{size_val},{args.num_layers},{args.l_dim},")
-    myfile.write(f"{args.epoch},{args.batch_size},")
-    myfile.write(f"{args.do},{args.bn},")
-    #PERF
-    myfile.write("l2,{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},".format(test_auc,comb_best_z,accuracy,precision,recall,f_score))
+    pickle.dump(loss_hist, open(f"train_log/nsl_{args.num_layers}_{args.max_hid_size}_{args.l_dim}_{args.epoch}_{args.batch_size}_{args.seed}.pkl", "wb"))
     
-    
-    #Added (210201) - FPR, MCC
-    myfile.write("{:.5f},{:.5f},".format(test_fpr,test_mcc))
-    ##
-
-    myfile.write(f"total,{args.seed},{args.dec_rate},{model_best['epoch_l2']}\n")
-    
-
-    joblib.dump(best_scaler, "./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.scaler".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed)) 
-    pickle.dump(best_num_desc,open("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.numdesc".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed), 'wb'))
-    # best_num_desc.to_csv(,header=None,index=None)
-    with open("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.pt".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed), "wb") as f:
+    #Save Files
+    with open(weight_dir+"/nsl_{}_{}_{}_{}.pt".format(args.l_dim,args.epoch,args.batch_size,args.seed), "wb") as f:
         torch.save(
             {
-                "state_l2": best_weights,
-                # "state_cos": model_best['state_cos'],
+                "best_weights": best_perf['model_weights'],
             },
             f,
         )
-    
-print("\nTrain Complete")
 
-best_num_desc=pickle.load(open("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.numdesc".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed), 'rb'))
-best_scaler=joblib.load("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.scaler".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed))
-with open("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.th".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed),'w') as f:
-    f.write(f'{str(best_mean)}\n{str(best_std)}\n{str(best_z)}')
+# print("\nTrain Complete")
+
+# best_num_desc=pickle.load(open("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.numdesc".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed), 'rb'))
+# best_scaler=joblib.load("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.scaler".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed))
+# with open("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.th".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed),'w') as f:
+#     f.write(f'{str(best_mean)}\n{str(best_std)}\n{str(best_z)}')
   
 
-test=pd.read_csv(data_dir+'/test.csv',header=None)
-test_df,y_test,y_test_types,_,_=preprocess(test,serviceData,flagData,is_train=False,scaler=best_scaler, num_desc=best_num_desc)
-x_test=test_df.values
-x_test_cuda = torch.from_numpy(x_test).float().to(device)
-eval_sampler = SequentialSampler(x_test_cuda)
-eval_dataloader = DataLoader(x_test_cuda, sampler=eval_sampler, batch_size=args.batch_size)
-pred_test,_=get_model_preds(model,eval_dataloader)
+# test=pd.read_csv(data_dir+'/test.csv',header=None)
+# test_df,y_test,y_test_types,_,_=preprocess(test,serviceData,flagData,is_train=False,scaler=best_scaler, num_desc=best_num_desc)
+# x_test=test_df.values
+# x_test_cuda = torch.from_numpy(x_test).float().to(device)
+# eval_sampler = SequentialSampler(x_test_cuda)
+# eval_dataloader = DataLoader(x_test_cuda, sampler=eval_sampler, batch_size=args.batch_size)
+# pred_test,_=get_model_preds(model,eval_dataloader)
 
-test_dist=np.mean(np.square(x_test-pred_test),axis=1)
-test_dist_norm=(test_dist-best_mean)/best_std
+# test_dist=np.mean(np.square(x_test-pred_test),axis=1)
+# test_dist_norm=(test_dist-best_mean)/best_std
 
-y_pred=np.zeros_like(y_test)
-y_pred[test_dist_norm>best_z]=1
+# y_pred=np.zeros_like(y_test)
+# y_pred[test_dist_norm>best_z]=1
 
-test_auc,_,_=make_roc(test_dist,y_test,ans_label=ATK)
-prf(y_test,y_pred,ans_label=1,avg_type='binary')
-accuracy = accuracy_score(y_test,y_pred)
-precision, recall, f_score, support = precision_recall_fscore_support(y_test, y_pred, pos_label=1, average='binary')
-f_0_5=fbeta_score(y_test, y_pred, pos_label=1, average='binary', beta=0.5)
-f_2=fbeta_score(y_test, y_pred,pos_label=1, average='binary', beta=2)
-print("F1 {:.5f} F0.5 {:.5f} F2 {:.5f}\n".format(f_score,f_0_5,f_2))
+# test_auc,_,_=make_roc(test_dist,y_test,ans_label=ATK)
+# prf(y_test,y_pred,ans_label=1,avg_type='binary')
+# accuracy = accuracy_score(y_test,y_pred)
+# precision, recall, f_score, support = precision_recall_fscore_support(y_test, y_pred, pos_label=1, average='binary')
+# f_0_5=fbeta_score(y_test, y_pred, pos_label=1, average='binary', beta=0.5)
+# f_2=fbeta_score(y_test, y_pred,pos_label=1, average='binary', beta=2)
+# print("F1 {:.5f} F0.5 {:.5f} F2 {:.5f}\n".format(f_score,f_0_5,f_2))
 
-#Added (210201) - FPR, MCC
-test_fpr=fpr(y_test,y_pred)
-test_mcc=mcc(y_test,y_pred)
-print("FPR {:.5f}, MCC {:.5f}".format(test_fpr,test_mcc))
+# #Added (210201) - FPR, MCC
+# test_fpr=fpr(y_test,y_pred)
+# test_mcc=mcc(y_test,y_pred)
+# print("FPR {:.5f}, MCC {:.5f}".format(test_fpr,test_mcc))
 
-if args.dist_cos:
-    log_name=f"perf_results/nsl_{args.size}_{args.num_layers}_cos.csv"
-else:
-    log_name=f"perf_results/nsl_{args.size}_{args.num_layers}.csv"
+# if args.dist_cos:
+#     log_name=f"perf_results/nsl_{args.size}_{args.num_layers}_cos.csv"
+# else:
+#     log_name=f"perf_results/nsl_{args.size}_{args.num_layers}.csv"
 
-if not os.path.isfile(log_name):
-     with open(log_name, "a") as myfile:
-         myfile.write("size,num_layers,l_dim,epoch,batch,dropout,bn,dist,"+"auc,z,acc,p,r,f,"+"fpr,mcc,"+"label,seed,dec_rate\n")
+# if not os.path.isfile(log_name):
+#      with open(log_name, "a") as myfile:
+#          myfile.write("size,num_layers,l_dim,epoch,batch,dropout,bn,dist,"+"auc,z,acc,p,r,f,"+"fpr,mcc,"+"label,seed,dec_rate\n")
          
-with open(log_name, "a") as myfile:
-    #L2
-    myfile.write(f"{size_val},{args.num_layers},{args.l_dim},")
-    myfile.write(f"{args.epoch},{args.batch_size},")
-    myfile.write(f"{args.do},{args.bn},")
-    #PERF
-    # myfile.write("l2,{:.5f},{},".format(model_best['auc_l2'],model_best['epoch_l2']))
-    if args.dist_cos:
-        myfile.write("cos,{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},".format(test_auc,comb_best_z,accuracy,precision,recall,f_score))
-    else:
-        myfile.write("l2,{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},".format(test_auc,comb_best_z,accuracy,precision,recall,f_score))
-    #Added (210201) - FPR, MCC
-    myfile.write("{:.5f},{:.5f},".format(test_fpr,test_mcc))
-    ##
-    myfile.write(f"total,{args.seed},{args.dec_rate}\n")
+# with open(log_name, "a") as myfile:
+#     #L2
+#     myfile.write(f"{size_val},{args.num_layers},{args.l_dim},")
+#     myfile.write(f"{args.epoch},{args.batch_size},")
+#     myfile.write(f"{args.do},{args.bn},")
+#     #PERF
+#     # myfile.write("l2,{:.5f},{},".format(model_best['auc_l2'],model_best['epoch_l2']))
+#     if args.dist_cos:
+#         myfile.write("cos,{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},".format(test_auc,comb_best_z,accuracy,precision,recall,f_score))
+#     else:
+#         myfile.write("l2,{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},".format(test_auc,comb_best_z,accuracy,precision,recall,f_score))
+#     #Added (210201) - FPR, MCC
+#     myfile.write("{:.5f},{:.5f},".format(test_fpr,test_mcc))
+#     ##
+#     myfile.write(f"total,{args.seed},{args.dec_rate}\n")
 
-exit()
+if __name__ == "__main__":
+    # Argument Setting
+    parser = argparse.ArgumentParser()
+
+    #Random Seed (For Reproducibility)
+    parser.add_argument("--seed", default=42, type=int,
+                        help="random seed for reproductability")
+
+    #Model Config
+    parser.add_argument("--l_dim", default=10, type=int,
+                        help="Latent dimension size")
+    parser.add_argument("--num_layers", default=2, type=int,
+                        help="number of hidden layers for each encoder,decoder")
+    parser.add_argument("--max_hid_size", default=64, type=int,
+                        help="Biggest Hid Size in Encoder,decoder")
+
+
+    #Training Params
+    parser.add_argument("--epoch", default=10, type=int,
+                        help="number of epochs")
+    parser.add_argument("--batch_size", default=8192, type=int,
+                        help="batch size")
+    parser.add_argument("--lr", default=1e-4, type=float,
+                        help="learning rate")
+
+
+    args = parser.parse_args()
+
+    wandb.init(project='svcc-nslkdd')
+
+    # Fix seed
+    set_seed(args.seed)
+    device = torch.device('cuda:0')
+    
+    #Train Log Folder
+    if not os.path.exists("train_log"):
+        os.makedirs("train_log")
+        
+    #Weight Folder
+    weight_dir=f"weights/nsl_{args.num_layers}_{args.max_hid_size}"
+    if not os.path.exists("weights"):
+        os.makedirs("weights")
+    if not os.path.exists(weight_dir):
+        os.makedirs(weight_dir)
+        
+    #Train Model
+    train(args,device,weight_dir)
+    
