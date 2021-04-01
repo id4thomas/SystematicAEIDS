@@ -1,39 +1,42 @@
 # SystematicAEIDS
-Systematic Approach to Building Autoencoder-based IDS
+Systematic Approach to Building Autoencoder-based IDS (SVCC 2020)
 
-WIP for Sensors MDPI
-
-To Add:
-False Positive Rate, Model Decreasing rate
+WIP for MDPI Sensors
+Analysis of AE model design for IDS
+* Model Structure
+    + Size of hidden layers
+    + Number of hidden layers
+* Latent Size
 
 # Dataset
-CIC-IDS 2017
+* NSL-KDD
+* IoTID20
+    + https://sites.google.com/view/iot-network-intrusion-dataset/home
+* N-BaIoT
+    + https://archive.ics.uci.edu/ml/datasets/detection_of_IoT_botnet_attacks_N_BaIoT#
+    + Danmini_Doorbell, Ecobee_Thermostat, Provision PT-737E, SimpleHome XCS7 1002, Philips Baby Monitor
 
-NSL-KDD
+## Preprocessing
+MinMax Scaling for numerical, OneHot encoding for categorical
 
-Kyoto Honeypot 2015
+# Approach
+## Training AE
+To insert system figure
 
-IoTID20
-https://sites.google.com/view/iot-network-intrusion-dataset/home
+# Evaluation
+## Evaluation Metric
+* Accuracy, Precision, Recall (TPR), F1
+* Recall (TPR), False Positive Rate (FPR)
+* Matthews Correlation Coefficient (MCC)
 
-IoT Botnet
-https://sites.google.com/view/iotbotnetdatset/home
+## NSL-KDD
 
-IoT-23
-https://www.stratosphereips.org/datasets-iot23
+## IoTID20
 
-N-BaIoT
-https://archive.ics.uci.edu/ml/datasets/detection_of_IoT_botnet_attacks_N_BaIoT#
-Danmini_Doorbell
-Ecobee_Thermostat
+## N-BaIoT
 
-# Evaluation Metric
-Precision,Recall,F1
-False Positive Rate
-Matthews Correlation Coefficient
-
+## ETC
 # Weight Folder
 weights_2: 2 Hidden Layers ex. in -> 128 -> 64 -> latent ...
 
 # Perf Log
-train_auc.txt: Best Validation AUC for L2, Cos Similarity Reconstruction Error.

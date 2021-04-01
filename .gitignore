@@ -10,6 +10,7 @@ data/nsl_kdd
 data/iotid20
 data/iotbotnet
 
+*.npy
 #Ignore model chkpoint Folder
 chk/
 wandb/
@@ -18,14 +19,16 @@ weights_*/
 #Plot folders hidden for now
 loss_plot/
 auc_plot/
+dist_plot/
+perf_plot/
 
 #Temporary Scripts
-train_*.sh
-eval_*.sh
+scripts/
 
 #Backup Results
 *_bak.*
 log_bak
+bak/
 
 #Perf Results
 perf_results/
