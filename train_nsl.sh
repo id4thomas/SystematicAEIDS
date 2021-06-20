@@ -32,3 +32,5 @@ do
     done
 done
 
+#TPR per Attack Category
+python eval_nsl_cat_tpr.py --num_layers $num_layers --max_hid_size $max_hid_size --batch_size $batch_size --epoch $epoch --num_runs 20
