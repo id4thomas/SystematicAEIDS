@@ -9,12 +9,14 @@ data/cicids17
 data/nsl_kdd
 data/iotid20
 data/iotbotnet
+data/nbaiot
 
 *.npy
 #Ignore model chkpoint Folder
 chk/
 wandb/
 weights_*/
+weights/
 
 #Plot folders hidden for now
 loss_plot/
@@ -29,6 +31,14 @@ scripts/
 *_bak.*
 log_bak
 bak/
+perf_results_bak/
 
 #Perf Results
-perf_results/
+# perf_results/
+
+#ETC
+kfold/
+.vscode/
+
+#Ignore CIC
+*_cic.*
