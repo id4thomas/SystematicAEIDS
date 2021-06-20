@@ -9,6 +9,7 @@ data/cicids17
 data/nsl_kdd
 data/iotid20
 data/iotbotnet
+data/nbaiot
 
 *.npy
 #Ignore model chkpoint Folder
