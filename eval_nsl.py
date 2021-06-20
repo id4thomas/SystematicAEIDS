@@ -1,8 +1,8 @@
 from __future__ import absolute_import, print_function
-import torch
-
 import argparse
 import os
+
+import torch
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 
 from model.ae import AE
@@ -10,21 +10,17 @@ from model.ae import AE
 from utils.data_utils import *
 from utils.perf_utils import *
 from utils.plot_utils import *
+from utils.train_utils import *
+
 
 #Preprocess Script
 from data.preprocess_nsl import *
 
-from sklearn.metrics import average_precision_score
-from scipy.spatial import distance
-
-import copy
 import numpy as np
-
 
 ATK=1
 SAFE=0
 
-    
 def load_data():
     data_dir='data/nsl_kdd/split'
     train=pd.read_csv(data_dir+'/train.csv',header=None)
@@ -98,32 +94,32 @@ def eval_perf(args,device,weight_dir):
     stddev=float(threshold[1])
     z_th=float(threshold[2])
     
-    
     x_test_cuda = torch.from_numpy(x_test).float().to(device)
     test_sampler = SequentialSampler(x_test_cuda)
     test_dataloader = DataLoader(x_test_cuda, sampler=test_sampler)
     
+    #Run test data through model
     pred_test=get_model_preds(model,test_dataloader)
 
+    #L2 Distance & Standardization
     test_dist=np.mean(np.square(x_test-pred_test),axis=1)
     test_dist_standardized=(test_dist-mean)/stddev
 
+    #Prediction with Threshold
     y_pred=np.zeros_like(y_test)
     y_pred[test_dist_standardized>z_th]=1
 
+    #Performance Evaluation
     test_auc,_,_=make_roc(test_dist,y_test,ans_label=ATK)
-    prf(y_test,y_pred,ans_label=1,avg_type='binary')
-    accuracy = accuracy_score(y_test,y_pred)
-    precision, recall, f_score, support = precision_recall_fscore_support(y_test, y_pred, pos_label=1, average='binary')
-    # f_0_5=fbeta_score(y_test, y_pred, pos_label=1, average='binary', beta=0.5)
-    # f_2=fbeta_score(y_test, y_pred,pos_label=1, average='binary', beta=2)
-    # print("F1 {:.5f} F0.5 {:.5f} F2 {:.5f}\n".format(f_score,f_0_5,f_2))
-
-    #Added (210201) - FPR, MCC
+    accuracy,precision,recall,f_score = aprf(y_test,y_pred,pos_label=ATK, average='binary')
     test_fpr=fpr(y_test,y_pred)
     test_mcc=mcc(y_test,y_pred)
     print("FPR {:.5f}, MCC {:.5f}".format(test_fpr,test_mcc))
     
+    #Confusion Matrix
+    # print(confusion_matrix(y_test,y_pred))
+
+    #Write to Log
     log_name=f"perf_results/nsl_{args.max_hid_size}_{args.num_layers}.csv"
     if not os.path.isfile(log_name):
          with open(log_name, "a") as myfile:
@@ -161,7 +157,6 @@ if __name__ == "__main__":
                         help="number of epochs")
     parser.add_argument("--batch_size", default=8192, type=int,
                         help="batch size")
-
 
     args = parser.parse_args()
     

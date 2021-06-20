@@ -1,32 +1,32 @@
 from __future__ import absolute_import, print_function
-import torch
-
 import argparse
 import os
+
+import torch
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 
 from model.ae import AE
 
+#Load Utils
 from utils.data_utils import *
 from utils.perf_utils import *
 from utils.plot_utils import *
+from utils.train_utils import *
 
-#Preprocess Script
+#Preprocess Script for data
 from data.preprocess_nsl import *
-
-from sklearn.metrics import average_precision_score
-from scipy.spatial import distance
-
 
 import copy
 import numpy as np
 
+#Wandb Logging
 import wandb
+from tqdm import tqdm
 
 #Saving
-import joblib
 import pickle
 
+#Label Info
 ATK=1
 SAFE=0
 
@@ -46,7 +46,7 @@ def load_data():
     #Preprocess
     train_df,y_train,y_train_types,scaler,num_desc=preprocess(train,serviceData,flagData)  
     x_train=train_df.values
-    x_train,y_train=filter_label(x_train,y_train,select_label=SAFE)
+    x_train,y_train=select_label_data(x_train,y_train,select_label=SAFE)
     print("Filter Train: Normal:{}, Atk:{}".format(x_train[y_train==0].shape[0],x_train[y_train==1].shape[0]))
 
     val_df,y_val,y_val_types,_,_=preprocess(val,serviceData,flagData,is_train=False,scaler=scaler, num_desc=num_desc)
@@ -129,10 +129,6 @@ def train(args,device,weight_dir):
     #Get Model
     model=get_model(args,x_train.shape[1])
     
-
-    best_val_mcc=0
-    best_weights=None
-
     #Log Validation Performance
     train_log_name="train_log/nsl.txt"
 
@@ -180,7 +176,8 @@ def train(args,device,weight_dir):
         epoch_loss = []
         print(f"\nTraining Epoch {epoch+1} Ldim {args.l_dim} Seed {args.seed}")
         model.train()
-        for step, batch in enumerate(data_loader):
+        # for step, batch in enumerate(data_loader):
+        for step, batch in enumerate(tqdm(data_loader)):
             target = batch.type(torch.float32)
 
             outputs = model(target)
@@ -225,22 +222,21 @@ def train(args,device,weight_dir):
 
     val_safe_mean,val_safe_stddev,val_best_z_th=get_threshold(val_dist,y_val)
     
+    #Standardized Distance
     val_dist_standardized=(val_dist-val_safe_mean)/val_safe_stddev
     
     y_pred=np.zeros_like(y_val)
     y_pred[val_dist_standardized>val_best_z_th]=1
     
+    #Performance
     val_auc,_,_=make_roc(val_dist,y_val,ans_label=ATK)
-    accuracy = accuracy_score(y_val,y_pred)
-    precision, recall, f_score, _ = precision_recall_fscore_support(y_val, y_pred, pos_label=ATK, average='binary')
-    # f_0_5=fbeta_score(y_val, y_pred, pos_label=1, average='binary', beta=0.5)
-    # f_2=fbeta_score(y_val, y_pred,pos_label=1, average='binary', beta=2)
-    # print("F1 {:.5f} F0.5 {:.5f} F2 {:.5f}\n".format(f_score,f_0_5,f_2))
+    accuracy,precision,recall,f_score = aprf(y_val,y_pred,pos_label=ATK, average='binary')
+    val_fpr=fpr(y_val,y_pred)
+    val_mcc=mcc(y_val,y_pred)
 
-    test_fpr=fpr(y_val,y_pred)
-    test_mcc=mcc(y_val,y_pred)
-    print("FPR {:.5f}, MCC {:.5f}".format(test_fpr,test_mcc))
-
+    print("Accuracy : {:0.4f}, Precision : {:0.4f}, Recall : {:0.4f}, F-score : {:0.4f}".format(accuracy, precision, recall, f_score))
+    print("FPR {:.5f}, MCC {:.5f}".format(val_fpr,val_mcc))
+    
     #Log Results
     with open(train_log_name, "a") as myfile:
         #L2
@@ -248,7 +244,7 @@ def train(args,device,weight_dir):
         myfile.write(f"{args.epoch},{args.batch_size},")
         #PERF
         myfile.write("{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},".format(val_best_z_th,val_auc,accuracy,precision,recall,f_score))
-        myfile.write("{:.5f},{:.5f},".format(test_fpr,test_mcc))
+        myfile.write("{:.5f},{:.5f},".format(val_fpr,val_mcc))
         myfile.write(f"{args.seed},{best_perf['best_epoch']}\n")
     
     pickle.dump(loss_hist, open(f"train_log/nsl_{args.num_layers}_{args.max_hid_size}_{args.l_dim}_{args.epoch}_{args.batch_size}_{args.seed}.pkl", "wb"))
@@ -261,66 +257,9 @@ def train(args,device,weight_dir):
             },
             f,
         )
+    with open(weight_dir+"/nsl_{}_{}_{}_{}.th".format(args.l_dim,args.epoch,args.batch_size,args.seed),'w') as f:
+        f.write(f'{str(val_safe_mean)}\n{str(val_safe_stddev)}\n{str(val_best_z_th)}')
 
-# print("\nTrain Complete")
-
-# best_num_desc=pickle.load(open("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.numdesc".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed), 'rb'))
-# best_scaler=joblib.load("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.scaler".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed))
-# with open("./weights_{}_{}_{}/nsl_{}_{}_{}_{}_{}.th".format(args.num_layers,model_dec_type,args.dec_rate,size_val,args.l_dim,args.epoch,args.batch_size,args.seed),'w') as f:
-#     f.write(f'{str(best_mean)}\n{str(best_std)}\n{str(best_z)}')
-  
-
-# test=pd.read_csv(data_dir+'/test.csv',header=None)
-# test_df,y_test,y_test_types,_,_=preprocess(test,serviceData,flagData,is_train=False,scaler=best_scaler, num_desc=best_num_desc)
-# x_test=test_df.values
-# x_test_cuda = torch.from_numpy(x_test).float().to(device)
-# eval_sampler = SequentialSampler(x_test_cuda)
-# eval_dataloader = DataLoader(x_test_cuda, sampler=eval_sampler, batch_size=args.batch_size)
-# pred_test,_=get_model_preds(model,eval_dataloader)
-
-# test_dist=np.mean(np.square(x_test-pred_test),axis=1)
-# test_dist_norm=(test_dist-best_mean)/best_std
-
-# y_pred=np.zeros_like(y_test)
-# y_pred[test_dist_norm>best_z]=1
-
-# test_auc,_,_=make_roc(test_dist,y_test,ans_label=ATK)
-# prf(y_test,y_pred,ans_label=1,avg_type='binary')
-# accuracy = accuracy_score(y_test,y_pred)
-# precision, recall, f_score, support = precision_recall_fscore_support(y_test, y_pred, pos_label=1, average='binary')
-# f_0_5=fbeta_score(y_test, y_pred, pos_label=1, average='binary', beta=0.5)
-# f_2=fbeta_score(y_test, y_pred,pos_label=1, average='binary', beta=2)
-# print("F1 {:.5f} F0.5 {:.5f} F2 {:.5f}\n".format(f_score,f_0_5,f_2))
-
-# #Added (210201) - FPR, MCC
-# test_fpr=fpr(y_test,y_pred)
-# test_mcc=mcc(y_test,y_pred)
-# print("FPR {:.5f}, MCC {:.5f}".format(test_fpr,test_mcc))
-
-# if args.dist_cos:
-#     log_name=f"perf_results/nsl_{args.size}_{args.num_layers}_cos.csv"
-# else:
-#     log_name=f"perf_results/nsl_{args.size}_{args.num_layers}.csv"
-
-# if not os.path.isfile(log_name):
-#      with open(log_name, "a") as myfile:
-#          myfile.write("size,num_layers,l_dim,epoch,batch,dropout,bn,dist,"+"auc,z,acc,p,r,f,"+"fpr,mcc,"+"label,seed,dec_rate\n")
-         
-# with open(log_name, "a") as myfile:
-#     #L2
-#     myfile.write(f"{size_val},{args.num_layers},{args.l_dim},")
-#     myfile.write(f"{args.epoch},{args.batch_size},")
-#     myfile.write(f"{args.do},{args.bn},")
-#     #PERF
-#     # myfile.write("l2,{:.5f},{},".format(model_best['auc_l2'],model_best['epoch_l2']))
-#     if args.dist_cos:
-#         myfile.write("cos,{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},".format(test_auc,comb_best_z,accuracy,precision,recall,f_score))
-#     else:
-#         myfile.write("l2,{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},{:.5f},".format(test_auc,comb_best_z,accuracy,precision,recall,f_score))
-#     #Added (210201) - FPR, MCC
-#     myfile.write("{:.5f},{:.5f},".format(test_fpr,test_mcc))
-#     ##
-#     myfile.write(f"total,{args.seed},{args.dec_rate}\n")
 
 if __name__ == "__main__":
     # Argument Setting
