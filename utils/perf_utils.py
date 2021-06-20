@@ -7,6 +7,8 @@ from matplotlib.figure import Figure
 from sklearn import metrics
 from sklearn.metrics import precision_recall_fscore_support,accuracy_score
 from sklearn.metrics import fbeta_score, recall_score, matthews_corrcoef
+from sklearn.metrics import confusion_matrix
+
 
 def get_desc(losses,fpr,tpr,thresholds):
     normalDataLoss=losses[0]
@@ -40,6 +42,7 @@ def get_desc(losses,fpr,tpr,thresholds):
                     'accuracy' : accuracy})
     return frames
 
+#ROC Curve
 def make_roc(loss,label,ans_label=1,make_desc=False,make_plot=False):
     normalDataLoss=[]
     attackDataLoss=[]
@@ -51,15 +54,13 @@ def make_roc(loss,label,ans_label=1,make_desc=False,make_plot=False):
         else:
             normalDataLoss.append(loss[i])
 
-    # print("Normal data loss(%d): %f" % (len(normalDataLoss), np.average(np.array(normalDataLoss))))
-    # print("Attack data loss(%d): %f" % (len(attackDataLoss), np.average(np.array(attackDataLoss))))
-
     allDataLoss = normalDataLoss+attackDataLoss
     print("Sum : ", len(allDataLoss))
     print(len(normalDataLoss))
     allLabel = [0]*len(normalDataLoss)+[1]*len(attackDataLoss)
     allDataLoss=np.array(allDataLoss).flatten()
     
+    #Area under curve score
     auc=metrics.roc_auc_score(np.array(allLabel), np.array(allDataLoss))
     # print('AUC Score {}'.format(auc))
 
@@ -86,18 +87,28 @@ def make_roc(loss,label,ans_label=1,make_desc=False,make_plot=False):
         
     return auc,fig,desc
 
-def prf(y_true,y_pred,ans_label=1,avg_type='binary'):
+#Accuracy, Precision, Recall, F-score
+def aprf(y_true,y_pred,pos_label=1,average='binary'):
     accuracy = accuracy_score(y_true,y_pred)
-    precision, recall, f_score, support = precision_recall_fscore_support(y_true, y_pred, pos_label=ans_label, average=avg_type)
-    f_0_5=fbeta_score(y_true, y_pred, pos_label=ans_label, average=avg_type, beta=0.5)
-    f_2=fbeta_score(y_true, y_pred,pos_label=ans_label, average=avg_type, beta=2)
-    print("Accuracy : {:0.4f}, Precision : {:0.4f}, Recall : {:0.4f}, F-score : {:0.4f}".format(accuracy, precision, recall, f_score))
-    print("F0.5: {:0.4f} F2: {:.04f}".format(f_0_5,f_2))
+    precision, recall, f_score, support = precision_recall_fscore_support(y_true, y_pred, pos_label=pos_label, average=average)
+
+    #f0.5, f2 Scores
+    f_0_5=fbeta_score(y_true, y_pred, pos_label=pos_label, average=average, beta=0.5)
+    f_2=fbeta_score(y_true, y_pred,pos_label=pos_label, average=average, beta=2)
+    # print("Accuracy : {:0.4f}, Precision : {:0.4f}, Recall : {:0.4f}, F-score : {:0.4f}".format(accuracy, precision, recall, f_score))
+    # print("F0.5: {:0.4f} F2: {:.04f}".format(f_0_5,f_2))
+    return accuracy,precision,recall,f_score
 
 #False Positive Rate
 def fpr(y_true,y_pred,ans_label=1):
     # 1- TN/TN+FP
     return 1-recall_score(y_true,y_pred,pos_label=0)
 
+#Matthews Correlation Coefficient
 def mcc(y_true,y_pred,ans_label=1):
     return matthews_corrcoef(y_true,y_pred)
+
+#Confusion matrix
+def conf_matrix(y_true,y_pred):
+    return confusion_matrix(y_true, y_pred)
+    
